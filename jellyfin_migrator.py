@@ -91,17 +91,17 @@ def recursive_root_path_replacer(d, to_replace: dict):
     Returns the (un)modified object as well as how many items have been modified or ignored.
     """
     modified, ignored = 0, 0
-    if type(d) is dict:
+    if isinstance(d, dict):
         for k, v in d.items():
             d[k], mo, ig = recursive_root_path_replacer(v, to_replace)
             modified += mo
             ignored  += ig
-    elif type(d) is list:
+    elif isinstance(d, list):
         for i, e in enumerate(d):
             d[i], mo, ig = recursive_root_path_replacer(e, to_replace)
             modified += mo
             ignored  += ig
-    elif type(d) is str or isinstance(d, pathlib.PurePath):
+    elif isinstance(d, str) or isinstance(d, pathlib.PurePath):
         try:
             p = Path(d)
         except Exception:
@@ -149,17 +149,17 @@ def recursive_id_path_replacer(d, to_replace: dict):
     starts at the beginning of the id string.
     """
     modified, ignored = 0, 0
-    if type(d) is dict:
+    if isinstance(d, dict):
         for k, v in d.items():
             d[k], mo, ig = recursive_id_path_replacer(v, to_replace)
             modified += mo
             ignored  += ig
-    elif type(d) is list:
+    elif isinstance(d, list):
         for i, e in enumerate(d):
             d[i], mo, ig = recursive_id_path_replacer(e, to_replace)
             modified += mo
             ignored  += ig
-    elif type(d) is str or isinstance(d, pathlib.PurePath):
+    elif isinstance(d, str) or isinstance(d, pathlib.PurePath):
         try:
             p = Path(d)
         except Exception:
@@ -240,11 +240,11 @@ def update_db_table(
     cur = con.cursor()
 
     # If only one item has been specified, convert it to a list with one item instead.
-    if type(path_columns) not in (tuple, set, list):
+    if not isinstance(path_columns, (tuple, set, list)):
         path_columns = [path_columns]
-    if type(json_columns) not in (tuple, set, list):
+    if not isinstance(json_columns, (tuple, set, list)):
         json_columns = [json_columns]
-    if type(jf_image_columns) not in (tuple, set, list):
+    if not isinstance(jf_image_columns, (tuple, set, list)):
         jf_image_columns = [jf_image_columns]
 
     # This index will be used to separate the json from the path columns in the cur.execute
