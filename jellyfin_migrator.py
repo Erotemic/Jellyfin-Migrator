@@ -14,19 +14,18 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-
+import datetime
+import hashlib
+import json
+import os
 import pathlib
 import sqlite3
-import json
-import hashlib
 import xml.etree.ElementTree as ET
+
 from pathlib import Path
 from shutil import copy
-from time import time
-import datetime
 from string import ascii_letters
-import os
+from time import time
 
 from jellyfin_id_scanner import (
     bid2sid, sid2did, sid2bid, convert_ancestor_id
@@ -80,15 +79,17 @@ def print_log(*args, **kwargs):
         print(dt, *args, **kwargs, file=f)
 
 
-# Recursively replace all paths in "d" which can be
-#  * a path object
-#  * a path string
-#  * a dictionary (only values are checked, no keys).
-#  * a list
-#  * any nested structure of the above.
-#  * anything else is returned unmodified.
-# Returns the (un)modified object as well as how many items have been modified or ignored.
 def recursive_root_path_replacer(d, to_replace: dict):
+    """
+    Recursively replace all paths in "d" which can be
+     * a path object
+     * a path string
+     * a dictionary (only values are checked, no keys).
+     * a list
+     * any nested structure of the above.
+     * anything else is returned unmodified.
+    Returns the (un)modified object as well as how many items have been modified or ignored.
+    """
     modified, ignored = 0, 0
     if type(d) is dict:
         for k, v in d.items():
@@ -138,13 +139,15 @@ def recursive_root_path_replacer(d, to_replace: dict):
     return d, modified, ignored
 
 
-# Almost the same as recursive_root_path_replacer but for replacing id parts somewhere in
-# the paths including file names (can't use "is_relative_to" for checking).
-# ID paths usually have the format '.../83/833addde992893e93d0572907f8b4cad/...'. It's
-# important to note and change that parent folder with the firs byte of the id, too.
-# Sometimes the parent folder is just single digit. This code handles any subsring that
-# starts at the beginning of the id string.
 def recursive_id_path_replacer(d, to_replace: dict):
+    """
+    Almost the same as recursive_root_path_replacer but for replacing id parts somewhere in
+    the paths including file names (can't use "is_relative_to" for checking).
+    ID paths usually have the format '.../83/833addde992893e93d0572907f8b4cad/...'. It's
+    important to note and change that parent folder with the firs byte of the id, too.
+    Sometimes the parent folder is just single digit. This code handles any subsring that
+    starts at the beginning of the id string.
+    """
     modified, ignored = 0, 0
     if type(d) is dict:
         for k, v in d.items():
@@ -385,11 +388,13 @@ def update_db_table(
     con.close()
 
 
-# Walks through an XML file and checks *all* entries.
-# WARNING: The documentation of this parser explicitly mentions that it's not hardened against
-# known XML vulnerabilities. It is NOT suitable for unknown/unsafe XML files. Shouldn't be an
-# issue here though.
 def update_xml(file: Path, replace_dict: dict, replace_func) -> None:
+    """
+    Walks through an XML file and checks *all* entries.
+    WARNING: The documentation of this parser explicitly mentions that it's not hardened against
+    known XML vulnerabilities. It is NOT suitable for unknown/unsafe XML files. Shouldn't be an
+    issue here though.
+    """
     modified, ignored = 0, 0
     tree = ET.parse(file)
     root = tree.getroot()
@@ -550,19 +555,21 @@ def process_file(
             source.replace(target)
 
 
-# Processes the todo_list.
-# It handles potential wildcards in the file paths and keeps track
-# which files have already been processed. This allows you to have an
-# automatic, wildcard copy in your todo_list that just copies the files
-# to the (modified) destinations without processing them and without
-# modifying those that have already been copied _and_ modified.
-# Obviously this requires you to have the files that need processing
-# first in the todo_list and only then the wildcard copies.
-#
-# lst: job list
-# process_func: function to apply to jobs of lst.
-# replace_func: function used by process_func to do the replacing of paths, ...
 def process_files(lst: list, process_func, replace_func, path_replacements):
+    """
+    Processes the todo_list.
+    It handles potential wildcards in the file paths and keeps track
+    which files have already been processed. This allows you to have an
+    automatic, wildcard copy in your todo_list that just copies the files
+    to the (modified) destinations without processing them and without
+    modifying those that have already been copied _and_ modified.
+    Obviously this requires you to have the files that need processing
+    first in the todo_list and only then the wildcard copies.
+
+    lst: job list
+    process_func: function to apply to jobs of lst.
+    replace_func: function used by process_func to do the replacing of paths, ...
+    """
     done = set()
     for job in lst:
         if "no_log" not in job:
@@ -621,16 +628,14 @@ def process_files(lst: list, process_func, replace_func, path_replacements):
         print_log("")
 
 
-# Note: The .NET .Unicode method encodes as UTF16 little endian:
-# https://docs.microsoft.com/en-us/dotnet/api/system.text.encoding.unicode?view=net-6.0
 def get_dotnet_MD5(s: str):
+    """
+    Note: The .NET .Unicode method encodes as UTF16 little endian:
+    https://docs.microsoft.com/en-us/dotnet/api/system.text.encoding.unicode?view=net-6.0
+    """
     return hashlib.md5(s.encode("utf-16-le")).digest()
 
 
-# Derived/copied from update_db_table. I couldn't see a good way to do this without
-# copying. The data structures and processing are too different for path and id jobs.
-# Note: kwargs is due to how process_files works. It passes a lot of stuff from the
-# job list that's not needed here.
 def update_db_table_ids(
         source,
         target,
@@ -638,6 +643,12 @@ def update_db_table_ids(
         preview=False,
         **kwargs
 ):
+    """
+    Derived/copied from update_db_table. I couldn't see a good way to do this without
+    copying. The data structures and processing are too different for path and id jobs.
+    Note: kwargs is due to how process_files works. It passes a lot of stuff from the
+    job list that's not needed here.
+    """
     global IDS
 
     if not os.path.exists(source):
@@ -794,12 +805,14 @@ def jf_date_str_to_python_ns(s: str):
     return t
 
 
-# Convert a _python_ timestamp (float seconds since epoch, which is os dependent)
-# to a ISO like date string as found in the jellyfin database. I have no idea
-# if this works for all OS'es in all timezones. Very likely not but that whole
-# topic is about as much of a mess as jellyfin's databases. If you got any issues,
-# I'm sorry. If you find a solution, them, please let me know!
 def get_datestr_from_python_time_ns(time_ns: int):
+    """
+    Convert a _python_ timestamp (float seconds since epoch, which is os dependent)
+    to a ISO like date string as found in the jellyfin database. I have no idea
+    if this works for all OS'es in all timezones. Very likely not but that whole
+    topic is about as much of a mess as jellyfin's databases. If you got any issues,
+    I'm sorry. If you find a solution, them, please let me know!
+    """
     # Datetime has no support for sub-microsecond resolution (which is required here).
     # Doesn't matter anyway, we can add the whole sub-second part afterwards.
     time_s = time_ns // 1000000000
