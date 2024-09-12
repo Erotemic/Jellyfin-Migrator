@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Jellyfin Migrator - Adjusts your Jellyfin database to run on a new system.
 # Copyright (C) 2022  Max Zuidberg
 #
@@ -31,448 +32,51 @@ from jellyfin_id_scanner import (
     bid2sid, sid2did, sid2bid, convert_ancestor_id
 )
 
+# Choose an appropriate config file (
+# TODO: config should really be a path to some yaml or json)
+# import jellyfin_migrator_config as config
+import jellyfin_migrator_linux_config as config
 
-# TODO BEFORE YOU START:
-# * Create a copy of the jellyfin database you want to migrate
-# * Delete the following temp/cache folders (resp. the matching
-#   folders for your installation)
-#   * C:/ProgramData/Jellyfin/Server/cache
-#   * C:/ProgramData/Jellyfin/Server/log
-#   * C:/ProgramData/Jellyfin/Server/data/subtitles
-#     Note: this only contains *cached* subtitles that have been
-#           extracted on-the-fly from files streamed to clients.
-#   * RTFM (read the README.md) and you're ready to go.
-#   * Careful when replacing everything in your new installation,
-#     you might want to *not* copy your old network settings
-#     (C:/ProgramData/Jellyfin/Server/config/networking.xml)
-
-
-# Please specify a log file. The script is rather verbose and important
-# errors might get lost in the process. You should definitely check the
-# log file after running the script to see if there are any warnings or
-# other important messages! Use f.ex. notepad++ (npp) to quickly
-# highlight and remove bunches of uninteresting log messages:
-#   * Open log file in npp
-#   * Go to "Search -> Mark... (CTRL + M)"
-#   * Tick "Bookmark Line"
-#   * Search for strings that (only!) occur in the lines you want to
-#     remove. All those lines should get a marking next to the line number.
-#   * Go to "Search -> Bookmark -> Remove Bookmarked Lines"
-#   * Repeat as needed
-# Text encoding is UTF-8 (in npp selectable under "Encoding -> UTF-8")
-log_file = "D:/jf-migrator.log"
-
-
-# These paths will be processed in the order they're listed here.
-# This can be very important! F.ex. if specific subfolders go to a different
-# place than stuff in the root dir of a given path, the subfolders must be
-# processed first. Otherwise, they'll be moved to the same place as the other
-# stuff in the root folder.
-# Note: all the strings below will be converted to Path objects, so it doesn't
-# matter whether you write / or \\ or include a trailing / . After the path
-# replacement it will be converted back to a string with slashes as specified
-# by target_path_slash.
-# Note2: The AppDataPath and MetadataPath entries are only there to make sure
-# the script recognizes them as actual paths. This is necessary to adjust
-# the (back)slashes as specified. This can only be done on "known" paths
-# because (back)slashes occur in other strings, too, where they must not be
-# changed.
-path_replacements = {
-    # Self-explanatory, I guess. "\\" if migrating *to* Windows, "/" else.
-    "target_path_slash": "/",
-    # Paths to your libraries
-    "D:/Serien": "/data/tvshows",
-    "F:/Serien": "/data/tvshows",
-    "F:/Filme": "/data/movies",
-    "F:/Musik": "/data/music",
-    # Paths to the different parts of the jellyfin database. Determine these
-    # by comparing your existing installation with the paths in your new
-    # installation.
-    "C:/ProgramData/Jellyfin/Server/config": "/config",
-    "C:/ProgramData/Jellyfin/Server/cache": "/config/cache",
-    "C:/ProgramData/Jellyfin/Server/log": "/config/log",
-    "C:/ProgramData/Jellyfin/Server": "/config/data",  # everything else: metadata, plugins, ...
-    "C:/ProgramData/Jellyfin/Server/transcodes": "/config/data/transcodes",
-    "C:/Program Files/Jellyfin/Server/ffmpeg.exe": "usr/lib/jellyfin-ffmpeg/ffmpeg",
-    "%MetadataPath%": "%MetadataPath%",
-    "%AppDataPath%": "%AppDataPath%",
-}
-
-
-# This additional replacement dict is required to convert from the paths docker
-# shows to jellyfin back to the actual file system paths to figure out where
-# the files shall be copied. If relative paths are provided, the replacements
-# are done relative to target_root.
-#
-# Even if you're not using docker or not using path mapping with docker,
-# you probably do need to add some entries for accessing the media files
-# and appdata/metadata files. This is because the script must read all the
-# file creation and modification dates *as seen by jellyfin*.
-# In that case and if you're sure that this list is 100% correct,
-# *and only then* you can set "log_no_warnings" to True. Otherwise your logs
-# will be flooded with warnings that it couldn't find an entry to modify the
-# paths (which in that case would be fine because no modifications are needed).
-#
-# If you actually don't need any of this (f.ex. running the script in the
-# same environment as jellyfin), remove all entries except for
-#   * "log_no_warnings" (again, can be set to true if you're sure)
-#   * "target_path_slash"
-#   * %AppDataPath%
-#   * %MetadataPath%.
-fs_path_replacements = {
-    "log_no_warnings": False,
-    "target_path_slash": "/",
-    "/config": "/",
-    "%AppDataPath%": "/data/data",
-    "%MetadataPath%": "/data/metadata",
-    "/data/tvshows": "Y:/Serien",
-    "/data/movies": "Y:/Filme",
-    "/data/music": "Y:/Musik",
-}
-
-
-# Original root only needs to be filled if you're using auto target paths _and_
-# if your source dir doesn't match the source paths specified above in
-# path_replacements.
-# auto target will first replace source_root with original_root in a given path
-# and then do the replacement according to the path_replacements dict.
-# This is required if you copied your jellyfin DB to another location and then
-# start processing it with this script.
-original_root = Path("C:/ProgramData/Jellyfin/Server")
-source_root = Path("D:/Jellyfin/Server")
-target_root = Path("D:/Jellyfin-dummy")
-
-
-### The To-Do Lists: todo_list_paths, todo_list_id_paths and todo_list_ids.
-# If your installation is like mine, you don't need to change the following three todo_lists.
-# They contain which files should be modified and how.
-# The migration is a multistep process:
-#   1. Specified files are copied to the new location according to the path changes listed above
-#   2. All paths within those files are updated to match the new location
-#   3. The IDs that are used internally and are derived from the paths are updated
-#      1. They occur in jellyfins file paths, so these paths are updated both on the disk and in the databases.
-#      2. All remaining occurences of any IDs are updated throughout all files.
-#   4. Now that all files are where and how they should be, update the file creation and modification
-#      dates in the database.
-# todo_list_paths is used for step 1 and 2
-# todo_list_id_paths is used for step 3.1
-# todo_list_ids is used for step 3.2
-# table and columns for step 4 are hardcoded / determined automatically.
-#
-# General Notes:
-#   * For step 1, "path_replacements" is used to determine the new file paths.
-#   * In step 2, the "replacements" from the todo_list is used, but it makes no sense to set it
-#     to something different from what you used in step 1.
-#   * In step 3 the "replacements" entry in the todo_lists is auto-generated, no need to touch it either.
-#
-# Notes from my own jellyfin installation:
-#   3.1 seems to be "ancestor-str" and "ancestor" formatted IDs only (see jellyfin_id_scanner for details on the format)
-#   3.2 seems like only certain .db files contain them.
-#   Search for "ID types occurring in paths" to find the place in the code
-#   where you can select the types to include.
-todo_list_paths = [
-    {
-        "source": source_root / "data/library.db",
-        "target": "auto",                      # Usually you want to leave this on auto. If you want to work on the source file, set it to the same path (YOU SHOULDN'T!).
-        "replacements": path_replacements,     # Usually same for all but you could specify a specific one per db.
-        "tables": {
-            "TypedBaseItems": {        # Name of the table within the SQLite database file
-                "path_columns": [      # All column names that can contain paths.
-                    "path",
-                ],
-                "jf_image_columns": [  # All column names that can jellyfins "image paths mixed with image properties" strings.
-                    "Images",
-                ],
-                "json_columns": [      # All column names that can contain json data with paths.
-                    "data",
-                ],
-            },
-            "mediastreams": {
-                "path_columns": [
-                    "Path",
-                ],
-            },
-            "Chapters2": {
-                "jf_image_columns": [
-                    "ImagePath",
-                ],
-            },
-        },
-    },
-    {
-        "source": source_root / "data/jellyfin.db",
-        "target": "auto",
-        "replacements": path_replacements,
-        "tables": {
-            "ImageInfos": {
-                "path_columns": [
-                    "Path",
-                ],
-            },
-        },
-    },
-    # Copy all other .db files. Since it's copy-only (no path adjustments), omit the log output.
-    {
-        "source": source_root / "data/*.db",
-        "target": "auto",
-        "replacements": path_replacements,
-        "copy_only": True,
-        "no_log": True,
-    },
-
-    {
-        "source": source_root / "plugins/**/*.json",
-        "target": "auto",
-        "replacements": path_replacements,
-    },
-
-    {
-        "source": source_root / "config/*.xml",
-        "target": "auto",
-        "replacements": path_replacements,
-    },
-
-    {
-        "source": source_root / "metadata/**/*.nfo",
-        "target": "auto",
-        "replacements": path_replacements,
-    },
-
-    {
-        # .xml, .mblink, .collection files are here.
-        "source": source_root / "root/**/*.*",
-        "target": "auto",
-        "replacements": path_replacements,
-    },
-
-    {
-        "source": source_root / "data/collections/**/collection.xml",
-        "target": "auto",
-        "replacements": path_replacements,
-    },
-
-    {
-        "source": source_root / "data/playlists/**/playlist.xml",
-        "target": "auto",
-        "replacements": path_replacements,
-    },
-
-    # Lastly, copy anything that's left. Any file that's already been processed/copied is skipped
-    # ... you should delete the cache and the logs though.
-    {
-        "source": source_root / "**/*.*",
-        "target": "auto",
-        "replacements": path_replacements,
-        "copy_only": True,
-        "no_log": True,
-    },
-]
-
-# See comment from todo_list_paths for details about this todo_list.
-# "replacements" designates the source -> target path replacement dict.
-# Same as for the matching job in todo_list_paths.
-# The ID replacements are determined automatically.
-todo_list_id_paths = [
-    {
-        "source": source_root / "data/library.db",
-        "target": "auto-existing",             # If you used "auto" in todo_list_paths, leave this on "auto-existing". Otherwise specify same path.
-        "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
-        "tables": {
-            "TypedBaseItems": {        # Name of the table within the SQLite database file
-                "path_columns": [      # All column names that can contain paths.
-                    "path",
-                ],
-                "jf_image_columns": [  # All column names that can jellyfins "image paths mixed with image properties" strings.
-                    "Images",
-                ],
-                "json_columns": [      # All column names that can contain json data with paths OR IDs!!
-                    "data",
-                ],
-            },
-            "mediastreams": {
-                "path_columns": [
-                    "Path",
-                ],
-            },
-            "Chapters2": {
-                "jf_image_columns": [
-                    "ImagePath",
-                ],
-            },
-        },
-    },
-
-    {
-        "source": source_root / "config/*.xml",
-        "target": "auto-existing",             # If you used "auto" in todo_list_paths, leave this on "auto-existing". Otherwise specify same path.
-        "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
-    },
-
-    {
-        "source": source_root / "metadata/**/*",
-        "target": "auto-existing",             # If you used "auto" in todo_list_paths, leave this on "auto-existing". Otherwise specify same path.
-        "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
-    },
-
-    {
-        # .xml, .mblink, .collection files are here.
-        "source": source_root / "root/**/*",
-        "target": "auto-existing",             # If you used "auto" in todo_list_paths, leave this on "auto-existing". Otherwise specify same path.
-        "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
-    },
-
-    {
-        "source": source_root / "data/**/*",
-        "target": "auto-existing",             # If you used "auto" in todo_list_paths, leave this on "auto-existing". Otherwise specify same path.
-        "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
-    },
-]
-
-# See comment from todo_list_paths for details about this todo_list.
-# "replacements" designates the source -> target path replacement dict.
-# The ID replacements are determined automatically.
-todo_list_ids = [
-    {
-        "source": source_root / "data/library.db",
-        "target": "auto-existing",             # If you used "auto" in todo_list_paths, leave this on "auto-existing". Otherwise specify same path.
-        "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
-        "tables": {
-            "AncestorIds": {
-                "str": [],
-                "str-dash": [],
-                "ancestor-str": [
-                    "AncestorIdText",
-                ],
-                "ancestor-str-dash": [],
-                "bin": [
-                    "ItemId",
-                    "AncestorId",
-                ],
-            },
-            "Chapters2": {
-                "str": [],
-                "str-dash": [],
-                "ancestor-str": [],
-                "ancestor-str-dash": [],
-                "bin": [
-                    "ItemId",
-                ],
-            },
-            "ItemValues": {
-                "str": [],
-                "str-dash": [],
-                "ancestor-str": [],
-                "ancestor-str-dash": [],
-                "bin": [
-                    "ItemId",
-                ],
-            },
-            "People": {
-                "str": [],
-                "str-dash": [],
-                "ancestor-str": [],
-                "ancestor-str-dash": [],
-                "bin": [
-                    "ItemId",
-                ],
-            },
-            "TypedBaseItems": {
-                "str": [],
-                "str-dash": [],
-                "ancestor-str": [
-                    "TopParentId",
-                    "PresentationUniqueKey",
-                    "SeriesPresentationUniqueKey",
-                ],
-                "ancestor-str-dash": [
-                    "UserDataKey",
-                    "ExtraIds",
-                ],
-                "bin": [
-                    "guid",
-                    "ParentId",
-                    "SeasonId",
-                    "SeriesId",
-                    "OwnerId"
-                ],
-            },
-            "UserDatas": {
-                "str": [],
-                "str-dash": [],
-                "ancestor-str": [],
-                "ancestor-str-dash": [
-                    "key",
-                ],
-                "bin": [],
-            },
-            "mediaattachments": {
-                "str": [],
-                "str-dash": [],
-                "ancestor-str": [],
-                "ancestor-str-dash": [],
-                "bin": [
-                    "ItemId",
-                ],
-            },
-            "mediastreams": {
-                "str": [],
-                "str-dash": [],
-                "ancestor-str": [],
-                "ancestor-str-dash": [],
-                "bin": [
-                    "ItemId",
-                ],
-            },
-        },
-    },
-    {
-        "source": source_root / "data/playback_reporting.db",
-        "target": "auto-existing",             # If you used "auto" in todo_list_paths, leave this on "auto-existing". Otherwise specify same path.
-        "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
-        "tables": {
-            "PlaybackActivity": {
-                "str": [],
-                "str-dash": [],
-                "ancestor-str": [
-                    "ItemId",
-                ],
-                "ancestor-str-dash": [],
-                "bin": [],
-            },
-        },
-    },
-]
+LOG_FILE = config.LOG_FILE
+PATH_REPLACEMENTS = config.PATH_REPLACEMENTS
+FS_PATH_REPLACEMENTS = config.FS_PATH_REPLACEMENTS
+ORIGINAL_ROOT = config.ORIGINAL_ROOT
+SOURCE_ROOT = config.SOURCE_ROOT
+TARGET_ROOT = config.TARGET_ROOT
+TODO_LIST_PATHS = config.TODO_LIST_PATHS
+TODO_LIST_ID_PATHS = config.TODO_LIST_ID_PATHS
+TODO_LIST_IDS = config.TODO_LIST_IDS
 
 
 # Since library.db will be needed throughout the process, its location is stored
 # here once it's been moved and updated with the new paths.
-library_db_target_path = Path()
-library_db_source_path = Path()
+LIBRARY_DB_TARGET_PATH = Path()
+LIBRARY_DB_SOURCE_PATH = Path()
 
 
 # Similarly, the IDs are used in "hard-to-reach" places and are thus global, too.
-ids = dict()
+IDS = dict()
 
 
 # Custom print function that prints to both the console as well as to a log file
-logging_newline = False
+LOGGING_NEWLINE = False
 
 
 def print_log(*args, **kwargs):
-    global log_file, logging_newline
+    global LOGGING_NEWLINE
     print(*args, **kwargs)
 
     # Each new line gets a timestamp. That requires tracking of (previous)
     # line endings though. This is not perfect, but perfectly fine for this
     # script.
     dt = ""
-    if logging_newline:
+    if LOGGING_NEWLINE:
         dt = "[" + datetime.datetime.now().isoformat(sep=" ") + "] "
     if kwargs.get("end", "\n") == "\n":
-        logging_newline = True
+        LOGGING_NEWLINE = True
     else:
-        logging_newline = False
-    with open(log_file, "a", encoding="utf-8") as f:
+        LOGGING_NEWLINE = False
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
         print(dt, *args, **kwargs, file=f)
 
 
@@ -527,8 +131,8 @@ def recursive_root_path_replacer(d, to_replace: dict):
                 # after all only to give you a hint whether you missed a path.
                 # Also exclude URLs. Btw: pathlib can be quite handy for messing with URLs.
                 if len(p.parents) > 1 \
-                        and not d.startswith("https:") \
-                        and not d.startswith("http:") \
+                        and not str(d).startswith("https:") \
+                        and not str(d).startswith("http:") \
                         and not to_replace.get("log_no_warnings", False):
                     print_log(f"No entry for this (presumed) path: {d}")
     return d, modified, ignored
@@ -814,7 +418,6 @@ def get_target(
 ) -> Path:
     # Not the cleanest solution for remembering it between function calls but good enough here.
     global user_wants_inplace_warning
-#    global all_path_changes
 
     source = Path(source)
     target = Path(target)
@@ -828,16 +431,16 @@ def get_target(
     if len(target.parts) == 1 and target.name.startswith("auto"):
         if target.name == "auto-existing":
             skip_copy = True
-        original_source = original_root / source.relative_to(source_root)
+        original_source = ORIGINAL_ROOT / source.relative_to(SOURCE_ROOT)
         target, idgaf1, idgaf2 = recursive_root_path_replacer(original_source, to_replace=replacements)
-        target, idgaf1, idgaf2 = recursive_root_path_replacer(target, to_replace=fs_path_replacements)
+        target, idgaf1, idgaf2 = recursive_root_path_replacer(target, to_replace=FS_PATH_REPLACEMENTS)
         target = Path(target)
         if not target.is_absolute():
             if target.is_relative_to("/"):
                 # Otherwise the line below will make target relative to the _root_ of target_root
                 # instead of relative to target_root.
                 target = target.relative_to("/")
-            target = target_root / target
+            target = TARGET_ROOT / target
 
     # If source and target are the same there are two possibilities:
     #     1. The user actually wants to work on the given source files; maybe he already created
@@ -902,9 +505,9 @@ def process_file(
     elif target.suffix == ".db":
         # If it's "library.db", save it for later (see comment at declaration):
         if target.name == "library.db":
-            global library_db_source_path, library_db_target_path
-            library_db_source_path = source
-            library_db_target_path = target
+            global LIBRARY_DB_SOURCE_PATH, LIBRARY_DB_TARGET_PATH
+            LIBRARY_DB_SOURCE_PATH = source
+            LIBRARY_DB_TARGET_PATH = target
         # sqlite file. In this case table specifies which tables within that file have columns to check.
         # Iterate over those.
         for table, kwargs in tables.items():
@@ -972,8 +575,8 @@ def process_files(lst: list, process_func, replace_func, path_replacements):
             # Ironically Path.glob can't handle Path objects, hence the need
             # to convert them to a string...
             # It is expected that all these paths are relative to source_root.
-            source = source.relative_to(source_root)
-            for src in source_root.glob(str(source)):
+            source = source.relative_to(SOURCE_ROOT)
+            for src in SOURCE_ROOT.glob(str(source)):
                 if src.is_dir():
                     continue
                 if src in done:
@@ -1035,7 +638,11 @@ def update_db_table_ids(
         preview=False,
         **kwargs
 ):
-    global ids
+    global IDS
+
+    if not os.path.exists(source):
+        print_log("Database source={source} does not exist, skipping")
+        return
 
     print_log("Updating Item IDs in database... ")
 
@@ -1051,7 +658,12 @@ def update_db_table_ids(
             for column in columns:
                 print_log(f"Updating {column} IDs in table {table}...")
                 # See comment about iterating over rows while modifying them in update_db_table.
-                rows = [r for r in cur.execute(f"SELECT DISTINCT `{column}` from `{table}`")]
+                try:
+                    rows = [r for r in cur.execute(f"SELECT DISTINCT `{column}` from `{table}`")]
+                except sqlite3.OperationalError:
+                    print(f'ERROR selecting distinct row from table={table} column={column} in {source}')
+                    raise
+                    ...
                 progress = 0
                 rowcount = len(rows)
                 t = time()
@@ -1062,8 +674,8 @@ def update_db_table_ids(
                     if now - t > 1:
                         print_log(f"Progress: {progress} / {rowcount} rows")
                         t = now
-                    if old_id in ids[id_type]:
-                        new_id = ids[id_type][old_id]
+                    if old_id in IDS[id_type]:
+                        new_id = IDS[id_type][old_id]
                         try:
                             cur.execute(f"UPDATE `{table}` SET `{column}` = ? WHERE `{column}` = ?", (new_id, old_id))
                         except sqlite3.IntegrityError:
@@ -1086,9 +698,9 @@ def update_db_table_ids(
 
 
 def get_ids():
-    global library_db_target_path, ids
+    global LIBRARY_DB_TARGET_PATH, IDS
 
-    con = sqlite3.connect(library_db_target_path)
+    con = sqlite3.connect(LIBRARY_DB_TARGET_PATH)
     cur = con.cursor()
 
     id_replacements_bin = dict()
@@ -1109,7 +721,7 @@ def get_ids():
     id_replacements_ancestor_bin      = {sid2bid(k): sid2bid(v) for k, v in id_replacements_ancestor_str.items()}
     id_replacements_ancestor_str_dash = {sid2did(k): sid2did(v) for k, v in id_replacements_ancestor_str.items()}
 
-    ids = {
+    IDS = {
         "bin": id_replacements_bin,
         "str": id_replacements_str,
         "str-dash": id_replacements_str_dash,
@@ -1139,7 +751,7 @@ def get_ids():
         duplicates_new = [next(cur.execute("SELECT `guid`, `Path` FROM `TypedBaseItems` WHERE `guid` = ?", (guid,))) for guid in old_ids]
         # also fetch the old paths for better understanding/debugging
         con.close()
-        con = sqlite3.connect(library_db_source_path)
+        con = sqlite3.connect(LIBRARY_DB_SOURCE_PATH)
         cur = con.cursor()
         duplicates_old = [next(cur.execute("SELECT `guid`, `Path` FROM `TypedBaseItems` WHERE `guid` = ?", (guid,))) for guid in old_ids]
         duplicates_old = dict(duplicates_old)
@@ -1154,8 +766,6 @@ def get_ids():
         for id, newpath in duplicates_new:
             print_log(f"  Item ID: {bid2sid(id)},  Paths (old -> new): {duplicates_old[id]} -> {newpath}")
         input("Press Enter to continue or CTRL+C to abort. ")
-
-    return ids
 
 
 def update_ids():
@@ -1214,12 +824,10 @@ def delete_empty_folders(dir: str):
 
 
 def update_file_dates():
-    global library_db_target_path, fs_path_replacements
-
     print_log("Updating file dates... Note: Reading file dates seems to be quite slow. "
               "This will take a couple minutes")
 
-    con = sqlite3.connect(library_db_target_path)
+    con = sqlite3.connect(LIBRARY_DB_TARGET_PATH)
     cur = con.cursor()
 
     rows = [r for r in cur.execute("SELECT `rowid`, `Path`, `DateCreated`, `DateModified` FROM `TypedBaseItems`")]
@@ -1238,16 +846,16 @@ def update_file_dates():
 
         if not target:
             continue
-        # Determine file path as seen by this script (see fs_path_replacements for details)
+        # Determine file path as seen by this script (see FS_PATH_REPLACEMENTS for details)
         # Code taken from get_target
-        target, idgaf1, idgaf2 = recursive_root_path_replacer(target, to_replace=fs_path_replacements)
+        target, idgaf1, idgaf2 = recursive_root_path_replacer(target, to_replace=FS_PATH_REPLACEMENTS)
         target = Path(target)
         if not target.is_absolute():
             if target.is_relative_to("/"):
                 # Otherwise the line below will make target relative to the _root_ of target_root
                 # instead of relative to target_root.
                 target = target.relative_to("/")
-            target = target_root / target
+            target = TARGET_ROOT / target
         # End of code taken from get_target
 
         if not target.exists():
@@ -1281,10 +889,10 @@ def main():
 
     ### Copy relevant files and adjust all paths to the new locations.
     process_files(
-        todo_list_paths,
+        TODO_LIST_PATHS,
         process_func=process_file,
         replace_func=recursive_root_path_replacer,
-        path_replacements=path_replacements,
+        path_replacements=PATH_REPLACEMENTS,
     )
 
     ### Update IDs
@@ -1293,8 +901,8 @@ def main():
     # ID types occurring in paths (<- search for that to find another comment with more details if you missed it)
     # Include/Exclude types (see get_ids) to specify which are used for looking through paths.
     # Currently, all are included, just to be safe.
-    id_replacements_path = {**ids["ancestor-str"], **ids["ancestor-str-dash"], **ids["str"], **ids["str-dash"],
-                            "target_path_slash": path_replacements["target_path_slash"]}
+    id_replacements_path = {**IDS["ancestor-str"], **IDS["ancestor-str-dash"], **IDS["str"], **IDS["str-dash"],
+                            "target_path_slash": PATH_REPLACEMENTS["target_path_slash"]}
 
     # To (mostly) reuse the same functions from step 1, the replacements dict needs to be updated with
     # id_replacements_path. It can't be replaced since it's also used to find the files (which uses the
@@ -1302,25 +910,25 @@ def main():
     # the dict used to convert from source -> target is different, in reality, this is not an issue,
     # since step 1 only processes the roots of the paths (which cannot be similar to anything in
     # id_replacements_path).
-    for i, job in enumerate(todo_list_id_paths):
-        todo_list_id_paths[i]["replacements"] = id_replacements_path
+    for i, job in enumerate(TODO_LIST_ID_PATHS):
+        TODO_LIST_ID_PATHS[i]["replacements"] = id_replacements_path
 
     # Replace all paths with ids - both in the file system and within files.
     process_files(
-        todo_list_id_paths,
+        TODO_LIST_ID_PATHS,
         process_func=process_file,
         replace_func=recursive_id_path_replacer,
-        path_replacements={**path_replacements, **id_replacements_path},
+        path_replacements={**PATH_REPLACEMENTS, **id_replacements_path},
     )
     # Clean up empty folders that may be left behind in the target directory
-    #delete_empty_folders(target_root)
+    #delete_empty_folders(TARGET_ROOT)
 
     # Replace remaining ids.
     process_files(
-        todo_list_ids,
+        TODO_LIST_IDS,
         process_func=update_db_table_ids,
         replace_func=None,
-        path_replacements=path_replacements,
+        path_replacements=PATH_REPLACEMENTS,
     )
 
     # Finally, update the file dates in the db.
