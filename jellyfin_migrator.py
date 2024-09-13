@@ -412,7 +412,7 @@ def update_xml(file: Path, replace_dict: dict, replace_func) -> None:
 
 
 # Remember if the user wants to ignore all future warnings.
-user_wants_inplace_warning = True
+USER_WANTS_INPLACE_WARNING = True
 
 
 def get_target(
@@ -422,7 +422,7 @@ def get_target(
         no_log: bool = False,
 ) -> Path:
     # Not the cleanest solution for remembering it between function calls but good enough here.
-    global user_wants_inplace_warning
+    global USER_WANTS_INPLACE_WARNING
 
     source = Path(source)
     target = Path(target)
@@ -440,12 +440,14 @@ def get_target(
         target, idgaf1, idgaf2 = recursive_root_path_replacer(original_source, to_replace=replacements)
         target, idgaf1, idgaf2 = recursive_root_path_replacer(target, to_replace=FS_PATH_REPLACEMENTS)
         target = Path(target)
+        # print(f'!!!target={target}')
         if not target.is_absolute():
             if target.is_relative_to("/"):
                 # Otherwise the line below will make target relative to the _root_ of target_root
                 # instead of relative to target_root.
                 target = target.relative_to("/")
             target = TARGET_ROOT / target
+        # print(f'!>>target={target}')
 
     # If source and target are the same there are two possibilities:
     #     1. The user actually wants to work on the given source files; maybe he already created
@@ -458,7 +460,7 @@ def get_target(
     # Program: Are you sure? User: I don't know [yet]
     usure = "idk"
     if source == target:
-        if user_wants_inplace_warning:
+        if USER_WANTS_INPLACE_WARNING:
             while usure not in "yna":
                 usure = input("Warning! Working on original file! Continue? [Y]es, [N]o, [A]lways ")
                 # j is for the german "ja" which means yes.
@@ -469,7 +471,7 @@ def get_target(
                 target = None
             elif usure == "a":
                 # Don't warn about this anymore.
-                user_wants_inplace_warning = False
+                USER_WANTS_INPLACE_WARNING = False
     elif not skip_copy:
         if not target.parent.exists():
             target.parent.mkdir(parents=True)
@@ -672,9 +674,9 @@ def update_db_table_ids(
                 try:
                     rows = [r for r in cur.execute(f"SELECT DISTINCT `{column}` from `{table}`")]
                 except sqlite3.OperationalError:
-                    print(f'ERROR selecting distinct row from table={table} column={column} in {source}')
+                    print_log(f'ERROR: selecting distinct row from table={table} column={column} in {source}')
                     raise
-                    ...
+
                 progress = 0
                 rowcount = len(rows)
                 t = time()
@@ -863,12 +865,14 @@ def update_file_dates():
         # Code taken from get_target
         target, idgaf1, idgaf2 = recursive_root_path_replacer(target, to_replace=FS_PATH_REPLACEMENTS)
         target = Path(target)
+        # print(f'!!!target={target}')
         if not target.is_absolute():
             if target.is_relative_to("/"):
                 # Otherwise the line below will make target relative to the _root_ of target_root
                 # instead of relative to target_root.
                 target = target.relative_to("/")
             target = TARGET_ROOT / target
+        # print(f'!>>target={target}')
         # End of code taken from get_target
 
         if not target.exists():
@@ -914,8 +918,13 @@ def main():
     # ID types occurring in paths (<- search for that to find another comment with more details if you missed it)
     # Include/Exclude types (see get_ids) to specify which are used for looking through paths.
     # Currently, all are included, just to be safe.
-    id_replacements_path = {**IDS["ancestor-str"], **IDS["ancestor-str-dash"], **IDS["str"], **IDS["str-dash"],
-                            "target_path_slash": PATH_REPLACEMENTS["target_path_slash"]}
+    id_replacements_path = {
+        **IDS["ancestor-str"],
+        **IDS["ancestor-str-dash"],
+        **IDS["str"],
+        **IDS["str-dash"],
+        "target_path_slash": PATH_REPLACEMENTS["target_path_slash"]
+    }
 
     # To (mostly) reuse the same functions from step 1, the replacements dict needs to be updated with
     # id_replacements_path. It can't be replaced since it's also used to find the files (which uses the

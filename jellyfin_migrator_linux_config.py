@@ -49,20 +49,20 @@ PATH_REPLACEMENTS = {
     # Self-explanatory, I guess. "\\" if migrating *to* Windows, "/" else.
     "target_path_slash": "/",
     # Paths to your libraries
-    "/media/tvshows": "/new/data/tvshows",
-    "/media/movies": "/new/data/movies",
-    "/media/music": "/new/data/music",
+    "/media/tvshows": "/media/tvshows",
+    "/media/movies": "/media/movies",
+    "/media/music": "/media/music",
     # Paths to the different parts of the jellyfin database. Determine these
     # by comparing your existing installation with the paths in your new
     # installation.
-    "/config": "/new/config",
-    "/cache": "/new/config/cache",
-    "/config/log": "/new/config/log",
-    "/config/data": "/new/config/data",  # everything else: metadata, plugins, ...
-    "/config/data/transcodes": "/new/config/data/transcodes",
+    "/jellyfin/": "/config",
+    "/root/.cache/jellyfin": "/config/cache",
+    "/jellyfin/log": "/config/log",
+    "/jellyfin/data": "/config/data",  # everything else: metadata, plugins, ...
+    "/root/.cache/jellyfin/transcodes/": "/config/data/transcodes",
     "usr/lib/jellyfin-ffmpeg/ffmpeg": "usr/lib/jellyfin-ffmpeg/ffmpeg",
-    "%MetadataPath%": "%MetadataPath%",
-    "%AppDataPath%": "%AppDataPath%",
+    # "%MetadataPath%": "%MetadataPath%",
+    # "%AppDataPath%": "%AppDataPath%",
 }
 
 
@@ -105,8 +105,8 @@ FS_PATH_REPLACEMENTS = {
 # and then do the replacement according to the path_replacements dict.
 # This is required if you copied your jellyfin DB to another location and then
 # start processing it with this script.
-ORIGINAL_ROOT = Path("/config")
-SOURCE_ROOT = Path("/config")
+ORIGINAL_ROOT = Path("/jellyfin")
+SOURCE_ROOT = Path("/jellyfin")
 TARGET_ROOT = Path("/jellyfin-dummy")
 
 

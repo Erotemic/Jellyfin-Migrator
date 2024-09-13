@@ -32,7 +32,7 @@ print(table[0:2])
     docker exec -it jellyfin-apiclient-python-test-server rm -rf Jellyfin-Migrator/* && \
             docker container cp ~/code/Jellyfin-Migrator jellyfin-apiclient-python-test-server:/
 
-    docker exec -it jellyfin-apiclient-python-test-server bash -c "cd /Jellyfin-Migrator && python3 jellyfin_migrator.py"
+    docker exec -it jellyfin-apiclient-python-test-server bash -c "rm -rf /new && cd /Jellyfin-Migrator && python3 jellyfin_migrator.py"
 
     # Run the script
     cd /Jellyfin-Migrator
@@ -41,4 +41,46 @@ print(table[0:2])
     python3 Jellyfin-Migrator/jellyfin_id_scanner.py \
             --library-db /config/data/library.db \
             --scan-db /config/data/jellyfin.db
+    """
+
+
+    # Try2
+    """
+    docker exec -it jellyfin_apt bash
+    docker exec -it jellyfin_dockervariant bash
+
+    docker exec -it jellyfin_apt rm -rf Jellyfin-Migrator/* && \
+            docker container cp ~/code/Jellyfin-Migrator jellyfin_apt:/
+
+    mkdir -p /jellyfin-dummy
+    docker exec -it jellyfin_apt bash -c "rm -rf /new && cd /Jellyfin-Migrator && python3 jellyfin_migrator.py"
+
+    python3 Jellyfin-Migrator/jellyfin_id_scanner.py \
+            --library-db /config/data/library.db \
+            --scan-db /config/data/jellyfin.db
+
+
+        ls /var/lib/jellyfin
+        ls /var/lib/jellyfin/data
+        ls /var/lib/jellyfin/metadata
+        ls /var/log/jellyfin
+        ls /var/cache/jellyfin/
+        ls /etc/jellyfin/
+        ls /usr/lib/jellyfin-ffmpeg/ffmpeg
+        ls /var/lib/jellyfin/transcodes
+
+        ls ./root/.cache/jellyfin
+        ./usr/lib/jellyfin-ffmpeg
+        ls ./usr/lib/jellyfin
+        ./usr/share/doc/jellyfin-ffmpeg6
+        ls ./usr/share/doc/jellyfin
+        ./usr/share/doc/jellyfin-web
+        ./usr/share/doc/jellyfin-server
+        ./usr/share/jellyfin
+        ./etc/systemd/system/jellyfin.service.d
+        ls ./etc/jellyfin
+        ls ./var/lib/jellyfin
+        ls ./var/log/jellyfin
+        ls ./var/cache/jellyfin
+        ls ./jellyfin
     """
