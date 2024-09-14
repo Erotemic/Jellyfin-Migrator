@@ -18,14 +18,6 @@ class DemoJellyfinServerManager():
         * populate an server with demo data
 
         * check if a server exists
-
-    Example:
-        >>> from jellyfin_apiclient_python.demo.demo_jellyfin_server import *  # NOQA
-        >>> demoman = DemoJellyfinServerManager()
-        >>> demoman.verbose = 3
-        >>> demoman.server_exists()
-        >>> demoman.ensure_server(reset=True)
-        >>> assert demoman.server_exists()
     """
 
     def __init__(self):
