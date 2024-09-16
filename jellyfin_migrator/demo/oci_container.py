@@ -1,3 +1,24 @@
+"""
+CommandLine:
+    xdoctest -m jellyfin_migrator.demo.oci_container __doc__:0
+    xdoctest ~/code/Jellyfin-Migrator/jellyfin_migrator/demo/oci_container.py  __doc__:0
+
+Example:
+    >>> import sys, ubelt
+    >>> sys.path.append(ubelt.expandpath('~/code/Jellyfin-Migrator'))
+    >>> from jellyfin_migrator.demo.oci_container import *  # NOQA
+    >>> from jellyfin_migrator.demo.oci_container import _check_engine_version
+    >>> image1 = 'jellyfin/jellyfin'
+    >>> image2 = 'ubuntu:22.04'
+    >>> for image in [image1, image2]:
+    >>>     self = OCIContainer(image=image)
+    >>>     with self:
+    >>>         self.call(["echo", "hello world"])
+    >>>         self.call(["cat", "/proc/1/cgroup"])
+    >>>         #print(self.get_environment())
+    >>>         #print(self.debug_info())
+
+"""
 import io
 import json
 import os
@@ -39,6 +60,14 @@ class OCIPlatform(Enum):
     ARM64 = "linux/arm64"
     PPC64LE = "linux/ppc64le"
     S390X = "linux/s390x"
+
+# TODO: get this platform
+import platform  # NOQA
+print(platform.machine())
+if platform.machine() == 'x86_64':
+    DEFAULT_PLATFORM = OCIPlatform.AMD64
+else:
+    raise NotImplementedError
 
 
 @dataclass(frozen=True)
@@ -108,23 +137,6 @@ class OCIContainer:
     A bash shell is running in the remote container. When `call()` is invoked,
     the command is relayed to the remote shell, and the results are streamed
     back to cibuildwheel.
-
-    Example:
-        >>> import sys, ubelt
-        >>> sys.path.append(ubelt.expandpath('~/code/Jellyfin-Migrator'))
-        >>> from jellyfin_migrator.demo.oci_container import *  # NOQA
-        >>> from jellyfin_migrator.demo.oci_container import _check_engine_version
-        >>> #image = 'jellyfin/jellyfin'
-        >>> image = 'ubuntu:22.04'
-        >>> oci_platform = OCIPlatform.AMD64
-        >>> # Test the default container
-        >>> self = OCIContainer(image=image, oci_platform=oci_platform)
-        >>> self.__enter__()
-        >>> self.call(["echo", "hello world"])
-        >>> self.call(["cat", "/proc/1/cgroup"])
-        >>> #print(self.get_environment())
-        >>> print(self.debug_info())
-        >>> self.__exit__(None, None, None)
     """
 
     UTILITY_PYTHON = "/opt/python/cp38-cp38/bin/python"
@@ -137,7 +149,7 @@ class OCIContainer:
         self,
         *,
         image: str,
-        oci_platform: OCIPlatform,
+        oci_platform: OCIPlatform = DEFAULT_PLATFORM,
         cwd: PathOrStr | None = None,
         engine: OCIContainerEngineConfig = DEFAULT_ENGINE,
         appname: str = 'demo_container',
@@ -179,6 +191,9 @@ class OCIContainer:
         return f"--platform={oci_platform.value}", f"--pull={pull}"
 
     def __enter__(self):
+        return self.start()
+
+    def start(self):
         self.name = f"{self.appname}-{uuid.uuid4()}"
 
         _check_engine_version(self.engine)
@@ -221,12 +236,12 @@ class OCIContainer:
                 # "--env=CIBUILDWHEEL",
                 # "--env=SOURCE_DATE_EPOCH",
                 f"--name={self.name}",
+                # *['--entrypoint', '/bin/sh -c'],
                 "--interactive",
                 *(["--volume=/:/host"] if not self.engine.disable_host_mount else []),
                 *network_args,
                 *platform_args,
                 *self.engine.create_args,
-                # *['--entrypoint', '/bin/sh -c'],
                 self.image,
                 *shell_args,
             ],
@@ -234,31 +249,62 @@ class OCIContainer:
             verbose=3
         )
 
-        self.process = subprocess.Popen(
+        print('About to start process')
+        # self.process = subprocess.Popen(
+        #     [
+        #         self.engine.name,
+        #         "start",
+        #         "--attach",
+        #         "--interactive",
+        #         self.name,
+        #     ],
+        #     stdin=subprocess.PIPE,
+        #     stdout=subprocess.PIPE,
+        # )
+        ub.cmd(
             [
                 self.engine.name,
                 "start",
-                "--attach",
+                # "--attach",
+                # "--interactive",
+                self.name,
+            ],
+            # stdin=subprocess.PIPE,
+            # stdout=subprocess.PIPE,
+            verbose=3)
+
+        print('Make process to comunicate with container')
+        self.process = subprocess.Popen(
+            [
+                self.engine.name,
+                "exec",
+                # "-it",
+                # "--attach",
                 "--interactive",
                 self.name,
+                "bin/bash",
             ],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
         )
+        print('Finished creating process')
 
         assert self.process.stdin
         assert self.process.stdout
         self.bash_stdin = self.process.stdin
         self.bash_stdout = self.process.stdout
 
+        print('Calling true')
         # run a noop command to block until the container is responding
         self.call(["/bin/true"], cwd="/")
+        print('Called true')
 
         if self.cwd:
             # Although `docker create -w` does create the working dir if it
             # does not exist, podman does not. There does not seem to be a way
             # to setup a workdir for a container running in podman.
             self.call(["mkdir", "-p", os.fspath(self.cwd)], cwd="/")
+        print('Return self')
 
         return self
 
@@ -268,6 +314,9 @@ class OCIContainer:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
+        self.stop()
+
+    def stop(self):
         self.bash_stdin.write(b"exit 0\n")
         self.bash_stdin.flush()
         self.process.wait(timeout=30)
@@ -283,6 +332,15 @@ class OCIContainer:
 
         assert isinstance(self.name, str)
 
+        if 0:
+            # Could do a graceful stop, but it is not needed
+            ub.cmd(
+                [self.engine.name, "stop", self.name],
+                # stdout=subprocess.DEVNULL,
+                check=False,
+                verbose=3,
+            )
+
         keep_container = 0
         if not keep_container:
             # subprocess.run(
@@ -290,7 +348,7 @@ class OCIContainer:
                 [self.engine.name, "rm", "--force", "-v", self.name],
                 # stdout=subprocess.DEVNULL,
                 check=False,
-                verbose=0,
+                verbose=3,
             )
             self.name = None
 
@@ -463,11 +521,11 @@ def call(
     # print the command executing for the logs
     print("+ " + " ".join(shlex.quote(a) for a in args_))
     kwargs: dict[str, Any] = {}
-    # if capture_stdout:
-    #     kwargs["universal_newlines"] = True
-    #     kwargs["stdout"] = subprocess.PIPE
-    # result = subprocess.run(args_, check=True, shell=IS_WIN, env=env, cwd=cwd, **kwargs)
-    result = ub.cmd(args_, check=True, shell=IS_WIN, env=env, cwd=cwd, **kwargs)
+    if capture_stdout:
+        kwargs["universal_newlines"] = True
+        kwargs["stdout"] = subprocess.PIPE
+    result = subprocess.run(args_, check=True, shell=IS_WIN, env=env, cwd=cwd, **kwargs)
+    # result = ub.cmd(args_, check=True, shell=IS_WIN, env=env, cwd=cwd, verbose=3, **kwargs)
     if not capture_stdout:
         return None
     return typing.cast(str, result.stdout)

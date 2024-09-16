@@ -68,7 +68,7 @@ while 'starting' in info.stdout:
 
 #ub.codeblock
 text = '''
-#!/bin/bash
+#!/usr/bin/env bash
 export DEBIAN_FRONTEND=noninteractive
 apt update
 apt-get install software-properties-common -y
