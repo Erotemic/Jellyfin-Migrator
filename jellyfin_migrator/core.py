@@ -34,7 +34,8 @@ from jellyfin_id_scanner import (
 # Choose an appropriate config file (
 # TODO: config should really be a path to some yaml or json)
 # import jellyfin_migrator_config as config
-import jellyfin_migrator_linux_config as config
+# import jellyfin_migrator.windows_config as config
+import jellyfin_migrator.linux_config as config
 
 LOG_FILE = config.LOG_FILE
 PATH_REPLACEMENTS = config.PATH_REPLACEMENTS
