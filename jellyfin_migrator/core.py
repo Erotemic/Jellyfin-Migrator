@@ -27,7 +27,7 @@ from shutil import copy
 from string import ascii_letters
 from time import time
 
-from jellyfin_id_scanner import (
+from jellyfin_migrator.id_scanner import (
     bid2sid, sid2did, sid2bid, convert_ancestor_id
 )
 
@@ -218,7 +218,7 @@ def recursive_id_path_replacer(d, to_replace: dict):
                 ignored += 1
                 # Unlike recursive_root_path_replacer, there is no need to warn the user about
                 # potential paths that haven't been altered. In case you suspect that something is
-                # overlooked, check out jellyfin_id_scanner.py.
+                # overlooked, check out ./id_scanner.py.
                 # ignored is purely maintained for signature compatibility with recursive_root_path_replacer.
     return d, modified, ignored
 
@@ -728,7 +728,7 @@ def get_ids():
         if new_guid != guid:
             id_replacements_bin[guid] = new_guid
 
-    ### Adapted from jellyfin_id_scanner
+    ### Adapted from id_scanner
     id_replacements_str               = {bid2sid(k): bid2sid(v) for k, v in id_replacements_bin.items()}
     id_replacements_str_dash          = {sid2did(k): sid2did(v) for k, v in id_replacements_str.items()}
     id_replacements_ancestor_str      = {convert_ancestor_id(k): convert_ancestor_id(v) for k, v in id_replacements_str.items()}

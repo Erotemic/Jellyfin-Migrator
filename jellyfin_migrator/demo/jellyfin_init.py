@@ -1,6 +1,23 @@
 from jellyfin_apiclient_python import JellyfinClient
 
 
+def is_server_alive(port):
+    url = 'http://localhost'
+    import requests
+    try:
+        resp = requests.get(f'{url}:{port}/Startup/User')
+    except Exception as ex:
+        ex
+        ...
+        # print(f'ex={ex}')
+        # print('waiting')
+    else:
+        # print(f'resp={resp}')
+        if resp.ok:
+            return True
+    return False
+
+
 def configure_initial_server(port):
     import requests
     import time

@@ -1,11 +1,32 @@
 def main():
-    # Requires the erotemic branch of git@github.com:Erotemic/jellyfin-apiclient-python.git@erotemic
-    # as of 2024-09-12, in the future this may be merged upstream
-    # Setup a docker image
-    from jellyfin_apiclient_python.demo.demo_jellyfin_server import DemoJellyfinServerManager
-    demoman = DemoJellyfinServerManager()
-    demoman.ensure_server(reset=1)
-    assert demoman.server_exists()
+    from jellyfin_migrator.demo.jellyfin_apt_variant import ensure_apt_variant
+    from jellyfin_migrator.demo.jellyfin_docker_variant import ensure_docker_variant
+    import jellyfin_migrator
+    import ubelt as ub
+
+    # Get the path to the jellyfin migrator repo. we are going to copy the
+    # entire thing in.
+    repo_dpath = ub.Path(jellyfin_migrator.__file__).parent.parent
+
+    # Create two jellyfin servers. One will be the source and one will be the
+    # destination.
+    apt_variant = ensure_apt_variant()
+    docker_variant = ensure_docker_variant()
+    print(f'docker_variant.name={docker_variant.name}')
+    print(f'apt_variant.name={apt_variant.name}')
+    _ = ub.cmd('docker ps', verbose=3)
+
+    # Clear any existing version of the code in the docker container, and
+    # copy in a fresh copy of the latest code.
+    self = apt_variant
+    self.call(['rm', '-rf', 'Jellyfin-Migrator/*'])
+    self.copy_into(repo_dpath, '/Jellyfin-Migrator')
+    # self.call(['ls', '-al'], cwd='/Jellyfin-Migrator')
+
+    # Delete any previous migration data.
+    self.call(['rm', '-rf', '/new'])
+    # Run the migrator
+    self.call(['python3', '-m', 'jellyfin_migrator'], cwd='/Jellyfin-Migrator')
 
     # For now, lets do things manually
     """
@@ -42,7 +63,6 @@ print(table[0:2])
             --library-db /config/data/library.db \
             --scan-db /config/data/jellyfin.db
     """
-
 
     # Try2
     """

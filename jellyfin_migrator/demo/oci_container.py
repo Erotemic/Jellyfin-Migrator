@@ -1,7 +1,12 @@
 """
+Derived from [CIBuildWheel_OCICode]_.
+
 CommandLine:
     xdoctest -m jellyfin_migrator.demo.oci_container __doc__:0
     xdoctest ~/code/Jellyfin-Migrator/jellyfin_migrator/demo/oci_container.py  __doc__:0
+
+References:
+    .. [CIBuildWheel_OCICode] https://github.com/pypa/cibuildwheel/blob/main/cibuildwheel/oci_container.py
 
 Example:
     >>> import sys, ubelt
@@ -149,10 +154,10 @@ class OCIContainer:
         self,
         *,
         image: str,
+        name: str = 'demo_container',
         oci_platform: OCIPlatform = DEFAULT_PLATFORM,
         cwd: PathOrStr | None = None,
         engine: OCIContainerEngineConfig = DEFAULT_ENGINE,
-        appname: str = 'demo_container',
     ):
         if not image:
             msg = "Must have a non-empty image to run."
@@ -161,9 +166,8 @@ class OCIContainer:
         self.image = image
         self.oci_platform = oci_platform
         self.cwd = cwd
-        self.name: str | None = None
+        self.name: str | None = name
         self.engine = engine
-        self.appname = appname
 
     def _get_platform_args(self, *, oci_platform: OCIPlatform | None = None) -> tuple[str, str]:
         if oci_platform is None:
@@ -190,12 +194,35 @@ class OCIContainer:
             pass
         return f"--platform={oci_platform.value}", f"--pull={pull}"
 
-    def __enter__(self):
-        return self.start()
+    def exists(self):
+        info = ub.cmd([self.engine.name, 'ps', '-q', '-f', 'name=' + self.name + '$'], verbose=3)
+        return bool(info.stdout.strip())
+
+    def running(self):
+        info = ub.cmd([self.engine.name, 'ps', '-q', '-f', 'status=running', '-f', 'name=' + self.name + '$'], verbose=0)
+        return bool(info.stdout.strip())
+
+    def ensure(self):
+        if not self.exists():
+            self.start()
+            self.connect()
+
+    def status(self):
+        info = ub.cmd([self.engine.name, 'container', 'inspect', '-f', '{{.State.Status}}', self.name], verbose=0)
+        return info.stdout.strip()
 
     def start(self):
-        self.name = f"{self.appname}-{uuid.uuid4()}"
+        ub.cmd(
+            [
+                self.engine.name,
+                "start",
+                self.name,
+            ],
+            verbose=3)
 
+        self.connect()
+
+    def create(self):
         _check_engine_version(self.engine)
 
         # work-around for Travis-CI PPC64le Docker runs since 2021:
@@ -249,30 +276,7 @@ class OCIContainer:
             verbose=3
         )
 
-        print('About to start process')
-        # self.process = subprocess.Popen(
-        #     [
-        #         self.engine.name,
-        #         "start",
-        #         "--attach",
-        #         "--interactive",
-        #         self.name,
-        #     ],
-        #     stdin=subprocess.PIPE,
-        #     stdout=subprocess.PIPE,
-        # )
-        ub.cmd(
-            [
-                self.engine.name,
-                "start",
-                # "--attach",
-                # "--interactive",
-                self.name,
-            ],
-            # stdin=subprocess.PIPE,
-            # stdout=subprocess.PIPE,
-            verbose=3)
-
+    def connect(self):
         print('Make process to comunicate with container')
         self.process = subprocess.Popen(
             [
@@ -288,7 +292,6 @@ class OCIContainer:
             stdout=subprocess.PIPE,
         )
         print('Finished creating process')
-
         assert self.process.stdin
         assert self.process.stdout
         self.bash_stdin = self.process.stdin
@@ -304,9 +307,14 @@ class OCIContainer:
             # does not exist, podman does not. There does not seem to be a way
             # to setup a workdir for a container running in podman.
             self.call(["mkdir", "-p", os.fspath(self.cwd)], cwd="/")
-        print('Return self')
 
+    def setup(self):
+        self.create()
+        self.start()
         return self
+
+    def __enter__(self):
+        return self.setup()
 
     def __exit__(
         self,
