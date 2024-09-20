@@ -55,14 +55,17 @@ PATH_REPLACEMENTS = {
     # Paths to the different parts of the jellyfin database. Determine these
     # by comparing your existing installation with the paths in your new
     # installation.
-    "/jellyfin/": "/config",
-    "/root/.cache/jellyfin": "/config/cache",
+    # "/config/": "/config",
+    #"/root/.cache/jellyfin": "/config/cache",
+    "/jellyfin": "/config",
+    # no cache?
     "/jellyfin/log": "/config/log",
     "/jellyfin/data": "/config/data",  # everything else: metadata, plugins, ...
-    "/root/.cache/jellyfin/transcodes/": "/config/data/transcodes",
+    # no transcodes?
+    # "/root/.cache/jellyfin/transcodes/": "/config/data/transcodes",
     "usr/lib/jellyfin-ffmpeg/ffmpeg": "usr/lib/jellyfin-ffmpeg/ffmpeg",
-    # "%MetadataPath%": "%MetadataPath%",
-    # "%AppDataPath%": "%AppDataPath%",
+    "%MetadataPath%": "%MetadataPath%",
+    "%AppDataPath%": "%AppDataPath%",
 }
 
 

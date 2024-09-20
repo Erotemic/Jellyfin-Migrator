@@ -13,3 +13,7 @@ license = {file = "LICENSE"}
 requires-python = ">=3.8"
 #classifiers = []
 #dependencies = []
+
+[console_scripts]
+jellyfin-migrator = jellyfin_migrator.core:main
+jellyfin-id-scanner = jellyfin_migrator.id_scanner

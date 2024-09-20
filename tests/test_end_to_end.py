@@ -11,10 +11,19 @@ def main():
     # Create two jellyfin servers. One will be the source and one will be the
     # destination.
     apt_variant = ensure_apt_variant()
+
+    # TODO: add an option to reset the destination variant, as we will want to
+    # test it in a clean slate.
     docker_variant = ensure_docker_variant()
     print(f'docker_variant.name={docker_variant.name}')
     print(f'apt_variant.name={apt_variant.name}')
     _ = ub.cmd('docker ps', verbose=3)
+
+    # Look at the important spots in the apt-variant
+    apt_variant.call(['ls', '-al', '/media'])
+    apt_variant.call(['ls', '-al', '/jellyfin'])
+    apt_variant.call(['ls', '-al', '/var/lib/jellyfin'])
+    apt_variant.call(['ls', '-al', '/var/cache/jellyfin'])
 
     # Clear any existing version of the code in the docker container, and
     # copy in a fresh copy of the latest code.
@@ -30,7 +39,7 @@ def main():
 
     # For now, lets do things manually
     """
-    docker exec -it jellyfin-apiclient-python-test-server bash
+    docker exec -it jellyfin_demo_apt_variant bash
 
     cat /config/data/jellyfin.db
     cat /config/data/library.db
