@@ -14,6 +14,9 @@ requires-python = ">=3.8"
 #classifiers = []
 #dependencies = []
 
+[tool.setuptools.dynamic]
+version = {attr = "jellyfin_migrator.__version__"}
+
 [console_scripts]
-jellyfin-migrator = jellyfin_migrator.core:main
-jellyfin-id-scanner = jellyfin_migrator.id_scanner
+jellyfin-migrator = "jellyfin_migrator.core:main"
+jellyfin-id-scanner = "jellyfin_migrator.id_scanner"
