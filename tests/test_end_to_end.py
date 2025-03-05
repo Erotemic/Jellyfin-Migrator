@@ -29,8 +29,9 @@ def main():
     _ = ub.cmd('docker ps', verbose=3)
 
     # Look at the important spots in the apt-variant
+    apt_variant.call(['ls', '-al', '/'])
     apt_variant.call(['ls', '-al', '/media'])
-    apt_variant.call(['ls', '-al', '/jellyfin'])
+    # apt_variant.call(['ls', '-al', '/jellyfin'])
     apt_variant.call(['ls', '-al', '/var/lib/jellyfin'])
     apt_variant.call(['ls', '-al', '/var/cache/jellyfin'])
 
@@ -39,7 +40,7 @@ def main():
     self = apt_variant
     self.call(['rm', '-rf', 'Jellyfin-Migrator/*'])
     self.copy_into(repo_dpath, '/Jellyfin-Migrator')
-    # self.call(['ls', '-al'], cwd='/Jellyfin-Migrator')
+    self.call(['ls', '-al'], cwd='/Jellyfin-Migrator')
 
     # Delete any previous migration data.
     self.call(['rm', '-rf', '/new'])

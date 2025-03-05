@@ -66,7 +66,6 @@ class OCIPlatform(Enum):
 
 # TODO: get this platform
 import platform  # NOQA
-print(platform.machine())
 if platform.machine() == 'x86_64':
     DEFAULT_PLATFORM = OCIPlatform.AMD64
 else:
