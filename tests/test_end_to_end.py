@@ -1,4 +1,13 @@
 def main():
+    """
+    An end to end test that will create two docker containers:
+
+        1. An official jellyfin docker container
+        2. An ubuntu container with custom jellfin.
+
+    Given these containers we attempt to migrate the ubuntu variant to the
+    official docker variant.
+    """
     from jellyfin_migrator.demo.jellyfin_apt_variant import ensure_apt_variant
     from jellyfin_migrator.demo.jellyfin_docker_variant import ensure_docker_variant
     import jellyfin_migrator

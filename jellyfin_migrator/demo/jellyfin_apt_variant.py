@@ -7,6 +7,9 @@ from jellyfin_migrator.demo.jellyfin_init import is_server_alive
 
 
 def ensure_apt_variant():
+    """
+    Using an Ubuntu 22.04 image, setup a jellyfin server.
+    """
     paths = grab_demo_media()
     media_dpath = paths['media']
     port = 8098
@@ -33,6 +36,7 @@ def ensure_apt_variant():
     else:
         self.setup()
 
+        # Write the script into the container an call it to setup the server.
         text = ub.codeblock(
             '''
             #!/usr/bin/env bash

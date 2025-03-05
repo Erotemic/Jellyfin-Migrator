@@ -9,8 +9,6 @@ References:
     .. [CIBuildWheel_OCICode] https://github.com/pypa/cibuildwheel/blob/main/cibuildwheel/oci_container.py
 
 Example:
-    >>> import sys, ubelt
-    >>> sys.path.append(ubelt.expandpath('~/code/Jellyfin-Migrator'))
     >>> from jellyfin_migrator.demo.oci_container import *  # NOQA
     >>> from jellyfin_migrator.demo.oci_container import _check_engine_version
     >>> image1 = 'jellyfin/jellyfin'
