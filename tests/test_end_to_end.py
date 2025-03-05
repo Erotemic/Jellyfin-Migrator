@@ -19,7 +19,7 @@ def main():
 
     # Create two jellyfin servers. One will be the source and one will be the
     # destination.
-    apt_variant = ensure_apt_variant()
+    apt_variant = ensure_apt_variant(reset=True)
 
     # TODO: add an option to reset the destination variant, as we will want to
     # test it in a clean slate.
@@ -33,6 +33,7 @@ def main():
     apt_variant.call(['ls', '-al', '/media'])
     # apt_variant.call(['ls', '-al', '/jellyfin'])
     apt_variant.call(['ls', '-al', '/var/lib/jellyfin'])
+    apt_variant.call(['ls', '-al', '/var/log/jellyfin'])
     apt_variant.call(['ls', '-al', '/var/cache/jellyfin'])
 
     # Clear any existing version of the code in the docker container, and
@@ -44,8 +45,17 @@ def main():
 
     # Delete any previous migration data.
     self.call(['rm', '-rf', '/new'])
+
+    # Check that we can run Python
+    self.start()
+    self.connect()
+    self.call(['python3', '--version'])
+
     # Run the migrator
-    self.call(['python3', '-m', 'jellyfin_migrator'], cwd='/Jellyfin-Migrator')
+    # self.call(['python3', '-m', 'jellyfin_migrator'], cwd='/Jellyfin-Migrator')
+
+    # Call via a new exec to get stdout
+    ub.cmd(f'{self.engine.name} exec --workdir /Jellyfin-Migrator {self.name} python3 -m jellyfin_migrator', verbose=3)
 
     # For now, lets do things manually
     """

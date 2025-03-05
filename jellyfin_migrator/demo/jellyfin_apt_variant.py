@@ -6,7 +6,7 @@ from jellyfin_migrator.demo.jellyfin_init import add_demo_media_libraries
 from jellyfin_migrator.demo.jellyfin_init import is_server_alive
 
 
-def ensure_apt_variant():
+def ensure_apt_variant(reset=False):
     """
     Using an Ubuntu 22.04 image, setup a jellyfin server.
     """
@@ -28,13 +28,17 @@ def ensure_apt_variant():
         name='jellyfin_demo_apt_variant',
         engine=engine
     )
+    if reset:
+        self.remove(force=True, volumes=True)
+
     if self.running():
         self.connect()
     elif self.exists():
         self.start()
         self.connect()
     else:
-        self.setup()
+        self.create()
+        self.start()
 
         # Write the script into the container an call it to setup the server.
         text = ub.codeblock(
@@ -68,6 +72,10 @@ def ensure_apt_variant():
             # systemctl status jellyfin --no-pager
             ''')
 
+        # TODO:
+        # maybe fix systemctl with
+        # https://stackoverflow.com/questions/46800594/start-service-using-systemctl-inside-docker-container
+
         fpath = ub.Path.appdir('jellyfin/demo').ensuredir() / 'setup_apt_server.sh'
         fpath.write_text(text)
         self.copy_into(fpath, ub.Path(fpath.name))
@@ -75,13 +83,16 @@ def ensure_apt_variant():
         # import time
         # time.sleep(3)
         # Start the server
-        # self.call(['/usr/bin/jellyfin', '--webdir=/usr/share/jellyfin/web', '--ffmpeg=/usr/lib/jellyfin-ffmpeg/ffmpeg'])
         ub.cmd(f'docker exec --detach {self.name} /usr/bin/jellyfin --webdir=/usr/share/jellyfin/web --ffmpeg=/usr/lib/jellyfin-ffmpeg/ffmpeg')
         import time
         while not is_server_alive(port):
             print('waiting')
             time.sleep(0.1)
+
+        # Initialize the server with a user/pass: jellyfin/jellyfin
         configure_initial_server(port)
+
+        # Add media for the server to manage
         add_demo_media_libraries(port)
 
     if not is_server_alive(port):

@@ -585,6 +585,10 @@ def process_files(lst: list, process_func, replace_func, path_replacements):
             # Ironically Path.glob can't handle Path objects, hence the need
             # to convert them to a string...
             # It is expected that all these paths are relative to source_root.
+
+            # FIXME: On Linux installs, the pieces of the jellyfin system might
+            # be scattered across different roots, so we need to add the
+            # concept of a per "variant-directory" root.
             source = source.relative_to(SOURCE_ROOT)
             for src in SOURCE_ROOT.glob(str(source)):
                 if src.is_dir():
@@ -698,7 +702,7 @@ def update_db_table_ids(
                             rows = [dict(zip(col_names, row)) for row in rows]
                             print_log(f"Encountered {len(rows)} duplicated entries")
                             for i, row in enumerate(rows):
-                                print_log(f"Deleting ({i+1}/{len(rows)}): ", row)
+                                print_log(f"Deleting ({i + 1}/{len(rows)}): ", row)
                             cur.execute(f"DELETE FROM `{table}` WHERE `{column}` = ?", (old_id,))
                         updated_ids_count += 1
 
@@ -906,6 +910,7 @@ def main():
     print_log("Starting Jellyfin Database Migration")
 
     ### Copy relevant files and adjust all paths to the new locations.
+    print_log("Copy relevant files and adjust all paths to the new locations.")
     process_files(
         TODO_LIST_PATHS,
         process_func=process_file,
@@ -914,6 +919,7 @@ def main():
     )
 
     ### Update IDs
+    print_log("Update IDs.")
     # Generate IDs based on those new paths and save them in the global variable
     get_ids()
     # ID types occurring in paths (<- search for that to find another comment with more details if you missed it)
@@ -937,6 +943,7 @@ def main():
         TODO_LIST_ID_PATHS[i]["replacements"] = id_replacements_path
 
     # Replace all paths with ids - both in the file system and within files.
+    print_log("Replace all paths with ids.")
     process_files(
         TODO_LIST_ID_PATHS,
         process_func=process_file,
@@ -947,6 +954,7 @@ def main():
     #delete_empty_folders(TARGET_ROOT)
 
     # Replace remaining ids.
+    print_log("Replace remaining ids.")
     process_files(
         TODO_LIST_IDS,
         process_func=update_db_table_ids,
@@ -955,6 +963,7 @@ def main():
     )
 
     # Finally, update the file dates in the db.
+    print_log("Update the file dates.")
     update_file_dates()
 
     print_log("")

@@ -275,6 +275,7 @@ class OCIContainer:
 
     def connect(self):
         print('Make process to comunicate with container')
+        # TODO: would be nice to get stderr out of this too.
         self.process = subprocess.Popen(
             [
                 self.engine.name,
@@ -287,12 +288,14 @@ class OCIContainer:
             ],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
+            # stderr=subprocess.PIPE,
         )
         print('Finished creating process')
         assert self.process.stdin
         assert self.process.stdout
         self.bash_stdin = self.process.stdin
         self.bash_stdout = self.process.stdout
+        # self.bash_stderr = self.process.stderr
 
         print('Calling true')
         # run a noop command to block until the container is responding
@@ -320,6 +323,7 @@ class OCIContainer:
         exc_tb: TracebackType | None,
     ) -> None:
         self.stop()
+        self.remove(volumes=True, force=True)
 
     def stop(self):
         self.bash_stdin.write(b"exit 0\n")
@@ -327,6 +331,7 @@ class OCIContainer:
         self.process.wait(timeout=30)
         self.bash_stdin.close()
         self.bash_stdout.close()
+        # self.bash_stderr.close()
 
         if self.engine.name == "podman":
             # This works around what seems to be a race condition in the podman
@@ -346,16 +351,29 @@ class OCIContainer:
                 verbose=3,
             )
 
-        keep_container = 0
-        if not keep_container:
-            # subprocess.run(
-            ub.cmd(
-                [self.engine.name, "rm", "--force", "-v", self.name],
-                # stdout=subprocess.DEVNULL,
-                check=False,
-                verbose=3,
-            )
-            self.name = None
+    def remove(self, force=False, link=False, volumes=False):
+        """
+        Remove the container
+
+        Args:
+          force (bol): Force the removal of a running container (uses SIGKILL)
+          link (bool): Remove the specified link
+          volumes (bool): Remove anonymous volumes associated with the container
+        """
+        # subprocess.run(
+        options = []
+        if force:
+            options.append('--force')
+        if link:
+            options.append('--link')
+        if volumes:
+            options.append('--volumes')
+        ub.cmd(
+            [self.engine.name, "rm", *options, "-v", self.name],
+            # stdout=subprocess.DEVNULL,
+            check=False,
+            verbose=3,
+        )
 
     def copy_into(self, from_path: Path, to_path: PurePath) -> None:
         if from_path.is_dir():
@@ -393,6 +411,16 @@ class OCIContainer:
         capture_output: bool = False,
         cwd: PathOrStr | None = None,
     ) -> str:
+        """
+        TODO:
+            add second variant for calling a command inside a container via something like:
+
+                ub.cmd(f'{self.engine.name} exec --workdir {cwd} {self.name} {command}', verbose=3)
+
+            which will have much better stdout / stderr reporting, and we can
+            capture with ubelt, the downside is that it requires a new popen
+            process.
+        """
         if cwd is None:
             # Podman does not start the a container in a specific working dir
             # so we always need to specify it when making calls.
@@ -436,6 +464,7 @@ class OCIContainer:
         else:
             output_io = sys.stdout.buffer
 
+        # TODO: would be nice to get stderr out of this too.
         while True:
             line = self.bash_stdout.readline()
 

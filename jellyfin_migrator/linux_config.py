@@ -45,6 +45,53 @@ LOG_FILE = "./jf-migrator.log"
 # the (back)slashes as specified. This can only be done on "known" paths
 # because (back)slashes occur in other strings, too, where they must not be
 # changed.
+
+# PATH VARIANTS
+
+class DockerVariant:
+    """
+    This is where things go on the official docker image
+    """
+    config     = "/config"
+    cache      = "/config/cache"
+    log        = "/config/log"
+    data       = "/config/data"
+    transcodes = "/config/data/transcodes"
+    ffmpeg     = "usr/lib/jellyfin-ffmpeg/ffmpeg"
+
+
+class RootUserAptVariant:
+    """
+    I think this is where things go when they are installed using apt by root,
+    but not managed by systemctl
+    """
+    config     = "/root/.config/jellyfin"
+    cache      = "/root/.cache/jellyfin"
+    log        = "/root/.local/share/jellyfin/log"
+    data       = "/root/.local/share/jellyfin"
+    transcodes = "/root/.cache/jellyfin/transcodes"
+    ffmpeg     = "usr/lib/jellyfin-ffmpeg/ffmpeg"
+
+
+class SystemAptVariant:
+    """
+    I think this is where things go when they are installed by apt and managed
+    by systemctl
+    """
+    config     = "/etc/jellyfin/"
+    cache      = "/var/cache/jellyfin"
+    log        = "/var/log/jellyfin"
+    data       = "/var/lib/jellyfin"
+    transcodes = "/var/lib/jellyfin/transcodes"
+    ffmpeg     = "/usr/lib/jellyfin-ffmpeg/ffmpeg"
+
+
+SourceVariant = RootUserAptVariant
+DestinationVariant = DockerVariant
+_S = SourceVariant
+_D = DestinationVariant
+
+
 PATH_REPLACEMENTS = {
     # Self-explanatory, I guess. "\\" if migrating *to* Windows, "/" else.
     "target_path_slash": "/",
@@ -55,12 +102,15 @@ PATH_REPLACEMENTS = {
     # Paths to the different parts of the jellyfin database. Determine these
     # by comparing your existing installation with the paths in your new
     # installation.
-    "/etc/jellyfin/": "/config",
-    "/var/cache/jellyfin": "/config/cache",
-    "/var/log/jellyfin": "/config/log",
-    "/var/lib/jellyfin": "/config/data",  # everything else: metadata, plugins, ...
-    "/var/lib/jellyfin/transcodes": "/config/data/transcodes",
-    "/usr/lib/jellyfin-ffmpeg/ffmpeg": "usr/lib/jellyfin-ffmpeg/ffmpeg",
+
+    # Setup the path replacemets based on the variant being ported.
+    _S.config: _D.config,
+    _S.cache: _D.cache,
+    _S.log: _D.log,
+    _S.data: _D.data,
+    _S.transcodes: _D.transcodes,
+    _S.ffmpeg: _D.ffmpeg,
+
     "%MetadataPath%": "%MetadataPath%",
     "%AppDataPath%": "%AppDataPath%",
 }
@@ -105,9 +155,18 @@ FS_PATH_REPLACEMENTS = {
 # and then do the replacement according to the path_replacements dict.
 # This is required if you copied your jellyfin DB to another location and then
 # start processing it with this script.
-ORIGINAL_ROOT = Path("/jellyfin")
-SOURCE_ROOT = Path("/jellyfin")
+ORIGINAL_ROOT = Path(SourceVariant.data)
+SOURCE_ROOT = Path(SourceVariant.data)
 TARGET_ROOT = Path("/jellyfin-dummy")
+
+
+class SOURCE:
+    config = Path(_S.config)
+    cache = Path(_S.cache)
+    log = Path(_S.log)
+    data = Path(_S.data)
+    transcodes = Path(_S.transcodes)
+    ffmpeg = Path(_S.ffmpeg)
 
 
 ### The To-Do Lists: TODO_LIST_PATHS, TODO_LIST_ID_PATHS and TODO_LIST_IDS.
@@ -139,7 +198,7 @@ TARGET_ROOT = Path("/jellyfin-dummy")
 #   where you can select the types to include.
 TODO_LIST_PATHS = [
     {
-        "source": SOURCE_ROOT / "data/library.db",
+        "source": SOURCE.data / "data/library.db",
         "target": "auto",                      # Usually you want to leave this on auto. If you want to work on the source file, set it to the same path (YOU SHOULDN'T!).
         "replacements": PATH_REPLACEMENTS,     # Usually same for all but you could specify a specific one per db.
         "tables": {
@@ -167,7 +226,7 @@ TODO_LIST_PATHS = [
         },
     },
     {
-        "source": SOURCE_ROOT / "data/jellyfin.db",
+        "source": SOURCE.data / "data/jellyfin.db",
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
         "tables": {
@@ -180,7 +239,7 @@ TODO_LIST_PATHS = [
     },
     # Copy all other .db files. Since it's copy-only (no path adjustments), omit the log output.
     {
-        "source": SOURCE_ROOT / "data/*.db",
+        "source": SOURCE.data / "data/*.db",
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
         "copy_only": True,
@@ -188,38 +247,38 @@ TODO_LIST_PATHS = [
     },
 
     {
-        "source": SOURCE_ROOT / "plugins/**/*.json",
+        "source": SOURCE.data / "plugins/**/*.json",
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
     },
 
     {
-        "source": SOURCE_ROOT / "config/*.xml",
+        "source": SOURCE.config / "*.xml",
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
     },
 
     {
-        "source": SOURCE_ROOT / "metadata/**/*.nfo",
+        "source": SOURCE.data / "metadata/**/*.nfo",
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
     },
 
     {
         # .xml, .mblink, .collection files are here.
-        "source": SOURCE_ROOT / "root/**/*.*",
+        "source": SOURCE.data / "root/**/*.*",
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
     },
 
     {
-        "source": SOURCE_ROOT / "data/collections/**/collection.xml",
+        "source": SOURCE.data / "data/collections/**/collection.xml",
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
     },
 
     {
-        "source": SOURCE_ROOT / "data/playlists/**/playlist.xml",
+        "source": SOURCE.data / "data/playlists/**/playlist.xml",
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
     },
@@ -227,7 +286,7 @@ TODO_LIST_PATHS = [
     # Lastly, copy anything that's left. Any file that's already been processed/copied is skipped
     # ... you should delete the cache and the logs though.
     {
-        "source": SOURCE_ROOT / "**/*.*",
+        "source": SOURCE.data / "**/*.*",
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
         "copy_only": True,
@@ -270,26 +329,26 @@ TODO_LIST_ID_PATHS = [
     },
 
     {
-        "source": SOURCE_ROOT / "config/*.xml",
+        "source": SOURCE.config / "*.xml",
         "target": "auto-existing",             # If you used "auto" in TODO_LIST_PATHS, leave this on "auto-existing". Otherwise specify same path.
         "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
     },
 
     {
-        "source": SOURCE_ROOT / "metadata/**/*",
+        "source": SOURCE.data / "metadata/**/*",
         "target": "auto-existing",             # If you used "auto" in TODO_LIST_PATHS, leave this on "auto-existing". Otherwise specify same path.
         "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
     },
 
     {
         # .xml, .mblink, .collection files are here.
-        "source": SOURCE_ROOT / "root/**/*",
+        "source": SOURCE.data / "root/**/*",
         "target": "auto-existing",             # If you used "auto" in TODO_LIST_PATHS, leave this on "auto-existing". Otherwise specify same path.
         "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
     },
 
     {
-        "source": SOURCE_ROOT / "data/**/*",
+        "source": SOURCE.data / "data/**/*",
         "target": "auto-existing",             # If you used "auto" in TODO_LIST_PATHS, leave this on "auto-existing". Otherwise specify same path.
         "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
     },
@@ -300,7 +359,7 @@ TODO_LIST_ID_PATHS = [
 # The ID replacements are determined automatically.
 TODO_LIST_IDS = [
     {
-        "source": SOURCE_ROOT / "data/library.db",
+        "source": SOURCE.data / "data/library.db",
         "target": "auto-existing",             # If you used "auto" in TODO_LIST_PATHS, leave this on "auto-existing". Otherwise specify same path.
         "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
         "tables": {
@@ -393,7 +452,7 @@ TODO_LIST_IDS = [
         },
     },
     {
-        "source": SOURCE_ROOT / "data/playback_reporting.db",
+        "source": SOURCE.data / "data/playback_reporting.db",
         "target": "auto-existing",             # If you used "auto" in TODO_LIST_PATHS, leave this on "auto-existing". Otherwise specify same path.
         "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
         "tables": {

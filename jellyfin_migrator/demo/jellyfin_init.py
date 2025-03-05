@@ -19,6 +19,9 @@ def is_server_alive(port):
 
 
 def configure_initial_server(port):
+    """
+    Send post commands that will initialize the server
+    """
     import requests
     import time
     # time.sleep(10)
