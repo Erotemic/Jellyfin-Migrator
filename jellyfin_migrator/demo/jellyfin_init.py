@@ -2,17 +2,32 @@ from jellyfin_apiclient_python import JellyfinClient
 
 
 def is_server_alive(port):
+    r"""
+    Check if the local jellyfin server is alive on a port
+
+    Ignore:
+        curl -X GET "http://localhost:8098/Startup/User" \
+          -H "Content-Type: application/json" \
+          -d '{"Name": "jellyfin", "Password": "jellyfin"}' \
+                --show-error --fail
+
+        curl -X GET "http://localhost:8098/Startup/User" --show-error --fail
+        curl -X GET "http://localhost:8098" --show-error --fail
+        curl -X GET "http://localhost:8098/web/#/home.html" --show-error --fail -i
+        curl -X GET "http://localhost:8098" --show-error --fail -i
+    """
     url = 'http://localhost'
     import requests
     try:
         resp = requests.get(f'{url}:{port}/Startup/User')
+        # json={"Name": "jellyfin", "Password": "jellyfin"})
     except Exception as ex:
         ex
         ...
-        # print(f'ex={ex}')
-        # print('waiting')
+        print(f'ex={ex}')
+        print('waiting')
     else:
-        # print(f'resp={resp}')
+        print(f'resp={resp}')
         if resp.ok:
             return True
     return False
@@ -54,7 +69,7 @@ def configure_initial_server(port):
     time.sleep(1)
 
 
-def add_demo_media_libraries(port):
+def add_demo_media_libraries(port, media_dpath='/media'):
     # Create a client to perform some initial configuration.
     client = JellyfinClient()
     url = 'http://localhost'
@@ -72,9 +87,9 @@ def add_demo_media_libraries(port):
 
     client.jellyfin.add_media_library(
         name='Movies', collectionType='movies',
-        paths=['/media/movies'], refreshLibrary=True,
+        paths=[str(media_dpath) + '/movies'], refreshLibrary=True,
     )
     client.jellyfin.add_media_library(
         name='Music', collectionType='music',
-        paths=['/media/music'], refreshLibrary=True,
+        paths=[str(media_dpath) + '/music'], refreshLibrary=True,
     )

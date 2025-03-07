@@ -8,7 +8,7 @@ def main():
     Given these containers we attempt to migrate the ubuntu variant to the
     official docker variant.
     """
-    from jellyfin_migrator.demo.jellyfin_apt_variant import ensure_apt_variant
+    from jellyfin_migrator.demo.jellyfin_apt_variant import JellyfinAptContainer
     from jellyfin_migrator.demo.jellyfin_docker_variant import ensure_docker_variant
     import jellyfin_migrator
     import ubelt as ub
@@ -19,7 +19,10 @@ def main():
 
     # Create two jellyfin servers. One will be the source and one will be the
     # destination.
-    apt_variant = ensure_apt_variant(reset=True)
+    self = apt_variant = JellyfinAptContainer(mounts=[
+        {'source': repo_dpath, 'target': '/Jellyfin-Migrator'}
+    ])
+    apt_variant.reset()
 
     # TODO: add an option to reset the destination variant, as we will want to
     # test it in a clean slate.
@@ -30,7 +33,7 @@ def main():
 
     # Look at the important spots in the apt-variant
     apt_variant.call(['ls', '-al', '/'])
-    apt_variant.call(['ls', '-al', '/media'])
+    apt_variant.call(['ls', '-al', '/data/jellyfin'])
     # apt_variant.call(['ls', '-al', '/jellyfin'])
     apt_variant.call(['ls', '-al', '/var/lib/jellyfin'])
     apt_variant.call(['ls', '-al', '/var/log/jellyfin'])
@@ -39,23 +42,17 @@ def main():
     # Clear any existing version of the code in the docker container, and
     # copy in a fresh copy of the latest code.
     self = apt_variant
-    self.call(['rm', '-rf', 'Jellyfin-Migrator/*'])
-    self.copy_into(repo_dpath, '/Jellyfin-Migrator')
-    self.call(['ls', '-al'], cwd='/Jellyfin-Migrator')
-
+    # self.call(['rm', '-rf', 'Jellyfin-Migrator/*'])
+    # self.copy_into(repo_dpath, '/Jellyfin-Migrator')
+    # self.call(['ls', '-al'], cwd='/Jellyfin-Migrator')
     # Delete any previous migration data.
     self.call(['rm', '-rf', '/new'])
-
     # Check that we can run Python
     self.start()
     self.connect()
     self.call(['python3', '--version'])
-
-    # Run the migrator
-    # self.call(['python3', '-m', 'jellyfin_migrator'], cwd='/Jellyfin-Migrator')
-
-    # Call via a new exec to get stdout
-    ub.cmd(f'{self.engine.name} exec --workdir /Jellyfin-Migrator {self.name} python3 -m jellyfin_migrator', verbose=3)
+    # Run the migrator (with exec for stderr)
+    _ = self.exec('python3 -m jellyfin_migrator', cwd='/Jellyfin-Migrator')
 
     # For now, lets do things manually
     """

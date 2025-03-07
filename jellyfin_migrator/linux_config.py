@@ -70,7 +70,7 @@ class RootUserAptVariant:
     log        = "/root/.local/share/jellyfin/log"
     data       = "/root/.local/share/jellyfin"
     transcodes = "/root/.cache/jellyfin/transcodes"
-    ffmpeg     = "usr/lib/jellyfin-ffmpeg/ffmpeg"
+    ffmpeg     = "/usr/lib/jellyfin-ffmpeg/ffmpeg"
 
 
 class SystemAptVariant:
@@ -87,6 +87,11 @@ class SystemAptVariant:
 
 
 SourceVariant = RootUserAptVariant
+
+# Original should be set to source, unless you are performing the migration on
+# a different setup, which should not be common.
+OriginalVariant = RootUserAptVariant
+
 DestinationVariant = DockerVariant
 _S = SourceVariant
 _D = DestinationVariant
@@ -138,10 +143,11 @@ PATH_REPLACEMENTS = {
 #   * %MetadataPath%.
 FS_PATH_REPLACEMENTS = {
     "log_no_warnings": False,
-    # "target_path_slash": "/",
-    # "/config": "/",
-    # "%AppDataPath%": "/data/data",
-    # "%MetadataPath%": "/data/metadata",
+    "target_path_slash": "/",
+    '/data/jellyfin/media': '/new_media',
+    "/config": "/",
+    "%AppDataPath%": "/data/data",
+    "%MetadataPath%": "/data/metadata",
     # "/data/tvshows": "Y:/Serien",
     # "/data/movies": "Y:/Filme",
     # "/data/music": "Y:/Musik",
@@ -160,13 +166,39 @@ SOURCE_ROOT = Path(SourceVariant.data)
 TARGET_ROOT = Path("/jellyfin-dummy")
 
 
+# These generalize the notions of SOURCE_ROOT, TARGET_ROOT, and ORIGINAL_ROOT
+# in the original version of Migrator.
+class ORIGINAL:
+    config = Path(OriginalVariant.config)
+    cache = Path(OriginalVariant.cache)
+    log = Path(OriginalVariant.log)
+    data = Path(OriginalVariant.data)
+    transcodes = Path(OriginalVariant.transcodes)
+    ffmpeg = Path(OriginalVariant.ffmpeg)
+
+
 class SOURCE:
-    config = Path(_S.config)
-    cache = Path(_S.cache)
-    log = Path(_S.log)
-    data = Path(_S.data)
-    transcodes = Path(_S.transcodes)
-    ffmpeg = Path(_S.ffmpeg)
+    config = Path(SourceVariant.config)
+    cache = Path(SourceVariant.cache)
+    log = Path(SourceVariant.log)
+    data = Path(SourceVariant.data)
+    transcodes = Path(SourceVariant.transcodes)
+    ffmpeg = Path(SourceVariant.ffmpeg)
+
+
+class TARGET:
+    # config = Path(DestinationVariant.config)
+    # cache = Path(DestinationVariant.cache)
+    # log = Path(DestinationVariant.log)
+    # data = Path(DestinationVariant.data)
+    # transcodes = Path(DestinationVariant.transcodes)
+    # ffmpeg = Path(DestinationVariant.ffmpeg)
+    config = TARGET_ROOT
+    cache = TARGET_ROOT
+    log = TARGET_ROOT
+    data = TARGET_ROOT
+    transcodes = TARGET_ROOT
+    ffmpeg = TARGET_ROOT
 
 
 ### The To-Do Lists: TODO_LIST_PATHS, TODO_LIST_ID_PATHS and TODO_LIST_IDS.
@@ -199,6 +231,9 @@ class SOURCE:
 TODO_LIST_PATHS = [
     {
         "source": SOURCE.data / "data/library.db",
+        "source_root": SOURCE.data,
+        "original_root": ORIGINAL.data,
+        "target_root": TARGET.data,
         "target": "auto",                      # Usually you want to leave this on auto. If you want to work on the source file, set it to the same path (YOU SHOULDN'T!).
         "replacements": PATH_REPLACEMENTS,     # Usually same for all but you could specify a specific one per db.
         "tables": {
@@ -227,6 +262,9 @@ TODO_LIST_PATHS = [
     },
     {
         "source": SOURCE.data / "data/jellyfin.db",
+        "source_root": SOURCE.data,
+        "original_root": ORIGINAL.data,
+        "target_root": TARGET.data,
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
         "tables": {
@@ -240,6 +278,9 @@ TODO_LIST_PATHS = [
     # Copy all other .db files. Since it's copy-only (no path adjustments), omit the log output.
     {
         "source": SOURCE.data / "data/*.db",
+        "source_root": SOURCE.data,
+        "original_root": ORIGINAL.data,
+        "target_root": TARGET.data,
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
         "copy_only": True,
@@ -248,18 +289,27 @@ TODO_LIST_PATHS = [
 
     {
         "source": SOURCE.data / "plugins/**/*.json",
+        "source_root": SOURCE.data,
+        "original_root": ORIGINAL.data,
+        "target_root": TARGET.data,
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
     },
 
     {
         "source": SOURCE.config / "*.xml",
+        "source_root": SOURCE.config,
+        "original_root": ORIGINAL.config,
+        "target_root": TARGET.config,
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
     },
 
     {
         "source": SOURCE.data / "metadata/**/*.nfo",
+        "source_root": SOURCE.data,
+        "original_root": ORIGINAL.data,
+        "target_root": TARGET.data,
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
     },
@@ -267,18 +317,27 @@ TODO_LIST_PATHS = [
     {
         # .xml, .mblink, .collection files are here.
         "source": SOURCE.data / "root/**/*.*",
+        "source_root": SOURCE.data,
+        "original_root": ORIGINAL.data,
+        "target_root": TARGET.data,
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
     },
 
     {
         "source": SOURCE.data / "data/collections/**/collection.xml",
+        "source_root": SOURCE.data,
+        "original_root": ORIGINAL.data,
+        "target_root": TARGET.data,
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
     },
 
     {
         "source": SOURCE.data / "data/playlists/**/playlist.xml",
+        "source_root": SOURCE.data,
+        "original_root": ORIGINAL.data,
+        "target_root": TARGET.data,
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
     },
@@ -287,6 +346,9 @@ TODO_LIST_PATHS = [
     # ... you should delete the cache and the logs though.
     {
         "source": SOURCE.data / "**/*.*",
+        "source_root": SOURCE.data,
+        "original_root": ORIGINAL.data,
+        "target_root": TARGET.data,
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
         "copy_only": True,
@@ -301,6 +363,9 @@ TODO_LIST_PATHS = [
 TODO_LIST_ID_PATHS = [
     {
         "source": SOURCE_ROOT / "data/library.db",
+        "source_root": SOURCE.data,
+        "original_root": ORIGINAL.data,
+        "target_root": TARGET.data,
         "target": "auto-existing",             # If you used "auto" in TODO_LIST_PATHS, leave this on "auto-existing". Otherwise specify same path.
         "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
         "tables": {
@@ -330,12 +395,18 @@ TODO_LIST_ID_PATHS = [
 
     {
         "source": SOURCE.config / "*.xml",
+        "source_root": SOURCE.config,
+        "original_root": ORIGINAL.config,
+        "target_root": TARGET.config,
         "target": "auto-existing",             # If you used "auto" in TODO_LIST_PATHS, leave this on "auto-existing". Otherwise specify same path.
         "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
     },
 
     {
         "source": SOURCE.data / "metadata/**/*",
+        "source_root": SOURCE.data,
+        "original_root": ORIGINAL.data,
+        "target_root": TARGET.data,
         "target": "auto-existing",             # If you used "auto" in TODO_LIST_PATHS, leave this on "auto-existing". Otherwise specify same path.
         "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
     },
@@ -343,12 +414,18 @@ TODO_LIST_ID_PATHS = [
     {
         # .xml, .mblink, .collection files are here.
         "source": SOURCE.data / "root/**/*",
+        "source_root": SOURCE.data,
+        "original_root": ORIGINAL.data,
+        "target_root": TARGET.data,
         "target": "auto-existing",             # If you used "auto" in TODO_LIST_PATHS, leave this on "auto-existing". Otherwise specify same path.
         "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
     },
 
     {
         "source": SOURCE.data / "data/**/*",
+        "source_root": SOURCE.data,
+        "original_root": ORIGINAL.data,
+        "target_root": TARGET.data,
         "target": "auto-existing",             # If you used "auto" in TODO_LIST_PATHS, leave this on "auto-existing". Otherwise specify same path.
         "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
     },
@@ -360,6 +437,9 @@ TODO_LIST_ID_PATHS = [
 TODO_LIST_IDS = [
     {
         "source": SOURCE.data / "data/library.db",
+        "source_root": SOURCE.data,
+        "original_root": ORIGINAL.data,
+        "target_root": TARGET.data,
         "target": "auto-existing",             # If you used "auto" in TODO_LIST_PATHS, leave this on "auto-existing". Otherwise specify same path.
         "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
         "tables": {
@@ -453,6 +533,9 @@ TODO_LIST_IDS = [
     },
     {
         "source": SOURCE.data / "data/playback_reporting.db",
+        "source_root": SOURCE.data,
+        "original_root": ORIGINAL.data,
+        "target_root": TARGET.data,
         "target": "auto-existing",             # If you used "auto" in TODO_LIST_PATHS, leave this on "auto-existing". Otherwise specify same path.
         "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
         "tables": {

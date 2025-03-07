@@ -15,18 +15,20 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import datetime
-import hashlib
 import json
 import os
-import pathlib
 import sqlite3
 import xml.etree.ElementTree as ET
 
 from pathlib import Path
 from shutil import copy
-from string import ascii_letters
 from time import time
 
+from jellyfin_migrator.utils import get_dotnet_MD5
+from jellyfin_migrator.utils import jf_date_str_to_python_ns
+from jellyfin_migrator.utils import get_datestr_from_python_time_ns
+# from jellyfin_migrator.utils import nested_root_path_replacer
+from jellyfin_migrator.utils import nested_id_path_replacer
 from jellyfin_migrator.id_scanner import (
     bid2sid, sid2did, sid2bid, convert_ancestor_id
 )
@@ -41,7 +43,6 @@ LOG_FILE = config.LOG_FILE
 PATH_REPLACEMENTS = config.PATH_REPLACEMENTS
 FS_PATH_REPLACEMENTS = config.FS_PATH_REPLACEMENTS
 ORIGINAL_ROOT = config.ORIGINAL_ROOT
-SOURCE_ROOT = config.SOURCE_ROOT
 TARGET_ROOT = config.TARGET_ROOT
 TODO_LIST_PATHS = config.TODO_LIST_PATHS
 TODO_LIST_ID_PATHS = config.TODO_LIST_ID_PATHS
@@ -80,7 +81,46 @@ def print_log(*args, **kwargs):
         print(dt, *args, **kwargs, file=f)
 
 
-def recursive_root_path_replacer(d, to_replace: dict):
+def _single_file_path_replacer(d, to_replace: dict):
+    modified, ignored = 0, 0
+    try:
+        p = Path(d)
+    except Exception:
+        # This actually doesn't occur I think; Path() can pretty much convert any string into a Path
+        # object (which is equivalent to saying it doesn't have any restrictions for filenames).
+        ignored += 1
+    else:
+        found = False
+        for src, dst in to_replace.items():
+            if p.is_relative_to(src):
+                # This filters out all the "garbage" paths that actually were no paths to begin with
+                # and of course all the paths that are actually not relative to the src, dst couple
+                # currently checked.
+                p = dst / p.relative_to(src)
+                # I guess 99% of the users won't migrate _to_ windows but the script could generate
+                # \ paths anyways.
+                # p.as_posix() makes sure that we always get a string with "/". Otherwise, on windows,
+                # str(p) would automatically return "\" paths.
+                d = p.as_posix().replace("/", to_replace["target_path_slash"])
+                found = True
+                break
+        if found:
+            modified += 1
+        else:
+            ignored += 1
+            # No need to consider all the Path("sometext") objects. This might not be 100%
+            # accurate, but it eliminates 99.9999% of the false-positives. This output is
+            # after all only to give you a hint whether you missed a path.
+            # Also exclude URLs. Btw: pathlib can be quite handy for messing with URLs.
+            if len(p.parents) > 1 \
+                    and not str(d).startswith("https:") \
+                    and not str(d).startswith("http:") \
+                    and not to_replace.get("log_no_warnings", False):
+                print_log(f"No entry for this (presumed) path: {d}")
+    return d, modified, ignored
+
+
+def nested_root_path_replacer(d, to_replace: dict):
     """
     Recursively replace all paths in "d" which can be
      * a path object
@@ -91,135 +131,23 @@ def recursive_root_path_replacer(d, to_replace: dict):
      * anything else is returned unmodified.
     Returns the (un)modified object as well as how many items have been modified or ignored.
     """
+    import pathlib
+    # TODO: would likely be much faster with IndexableWalker
     modified, ignored = 0, 0
     if isinstance(d, dict):
         for k, v in d.items():
-            d[k], mo, ig = recursive_root_path_replacer(v, to_replace)
+            d[k], mo, ig = nested_root_path_replacer(v, to_replace)
             modified += mo
             ignored  += ig
     elif isinstance(d, list):
         for i, e in enumerate(d):
-            d[i], mo, ig = recursive_root_path_replacer(e, to_replace)
+            d[i], mo, ig = nested_root_path_replacer(e, to_replace)
             modified += mo
             ignored  += ig
     elif isinstance(d, str) or isinstance(d, pathlib.PurePath):
-        try:
-            p = Path(d)
-        except Exception:
-            # This actually doesn't occur I think; Path() can pretty much convert any string into a Path
-            # object (which is equivalent to saying it doesn't have any restrictions for filenames).
-            ignored += 1
-        else:
-            found = False
-            for src, dst in to_replace.items():
-                if p.is_relative_to(src):
-                    # This filters out all the "garbage" paths that actually were no paths to begin with
-                    # and of course all the paths that are actually not relative to the src, dst couple
-                    # currently checked.
-                    p = dst / p.relative_to(src)
-                    # I guess 99% of the users won't migrate _to_ windows but the script could generate
-                    # \ paths anyways.
-                    # p.as_posix() makes sure that we always get a string with "/". Otherwise, on windows,
-                    # str(p) would automatically return "\" paths.
-                    d = p.as_posix().replace("/", to_replace["target_path_slash"])
-                    found = True
-                    break
-            if found:
-                modified += 1
-            else:
-                ignored += 1
-                # No need to consider all the Path("sometext") objects. This might not be 100%
-                # accurate, but it eliminates 99.9999% of the false-positives. This output is
-                # after all only to give you a hint whether you missed a path.
-                # Also exclude URLs. Btw: pathlib can be quite handy for messing with URLs.
-                if len(p.parents) > 1 \
-                        and not str(d).startswith("https:") \
-                        and not str(d).startswith("http:") \
-                        and not to_replace.get("log_no_warnings", False):
-                    print_log(f"No entry for this (presumed) path: {d}")
-    return d, modified, ignored
-
-
-def recursive_id_path_replacer(d, to_replace: dict):
-    """
-    Almost the same as recursive_root_path_replacer but for replacing id parts somewhere in
-    the paths including file names (can't use "is_relative_to" for checking).
-    ID paths usually have the format '.../83/833addde992893e93d0572907f8b4cad/...'. It's
-    important to note and change that parent folder with the firs byte of the id, too.
-    Sometimes the parent folder is just single digit. This code handles any subsring that
-    starts at the beginning of the id string.
-    """
-    modified, ignored = 0, 0
-    if isinstance(d, dict):
-        for k, v in d.items():
-            d[k], mo, ig = recursive_id_path_replacer(v, to_replace)
-            modified += mo
-            ignored  += ig
-    elif isinstance(d, list):
-        for i, e in enumerate(d):
-            d[i], mo, ig = recursive_id_path_replacer(e, to_replace)
-            modified += mo
-            ignored  += ig
-    elif isinstance(d, str) or isinstance(d, pathlib.PurePath):
-        try:
-            p = Path(d)
-        except Exception:
-            # This actually doesn't occur I think; Path() can pretty much convert any string into a Path
-            # object (which is equivalent to saying it doesn't have any restrictions for filenames).
-            ignored += 1
-        else:
-            found = False
-
-            src, dst = "", ""
-
-            if set(p.stem).issubset(set("0123456789abcdef-")):
-                dst = to_replace.get(p.stem, "")
-                if dst:
-                    found = True
-                    p = p.with_stem(dst)
-
-            if not found:
-                for part in p.parts[:-1]:
-                    # Check if it can actually be an ID. If so, look it up (which is expensive).
-                    if set(part).issubset(set("0123456789abcdef-")):
-                        src = part
-                        dst = to_replace.get(part, "")
-                        if dst:
-                            break
-                if dst:
-                    found = True
-                    q = Path()
-                    # Find folder as path object that needs to be changed
-                    q = p
-                    while p.name != src:
-                        p = p.parent
-                    # q becomes the part relative to the now determined p part (with p.stem = id)
-                    q = q.relative_to(p)
-                    p = p.with_name(dst)
-
-                    # Check if the parent folder starts with byte(s) from the id
-                    if src.startswith(p.parent.name):
-                        # If so, move the already replaced part from p to q
-                        q = p.name / q
-                        p = p.parent
-                        # Replace required number of bytes
-                        p = p.with_name(dst[:len(p.name)])
-
-                    # Merge q and p back together
-                    p = p / q
-            if found:
-                modified += 1
-                # I guess 99% of the users won't migrate _to_ windows but the script could generate
-                # \ paths anyways.
-                # p.as_posix() makes sure that we always get a string with "/". Otherwise, on windows,
-                # str(p) would automatically return "\" paths.
-                d = p.as_posix().replace("/", to_replace["target_path_slash"])
-            else:
-                ignored += 1
-                # Unlike recursive_root_path_replacer, there is no need to warn the user about
-                # potential paths that haven't been altered. In case you suspect that something is
-                # overlooked, check out ./id_scanner.py.
-                # ignored is purely maintained for signature compatibility with recursive_root_path_replacer.
+        d, mo, ig = _single_file_path_replacer(d, to_replace)
+        modified += mo
+        ignored += ig
     return d, modified, ignored
 
 
@@ -237,6 +165,7 @@ def update_db_table(
     rows_count, modified, ignored = 0, 0, 0
 
     # Initialize sqlite3 objects
+    print(f'Connect to: file={file}')
     con = sqlite3.connect(file)
     cur = con.cursor()
 
@@ -365,18 +294,22 @@ def update_db_table(
         except Exception as e:
             # This was mainly for debugging purposes and shouldn't be reached anymore. Doesn't
             # hurt to have it though.
+            print('!!!!')
             print_log("Error:", e)
             print_log("Query:", query)
             print_log("Args: ", args)
             print_log(e)
+            raise
             exit()
         else:
             if cur.rowcount < 1:
                 # This was mainly for debugging purposes and shouldn't be reached anymore.
                 # Doesn't hurt to have it though.
+                print('!!!!')
                 print_log("No data modified!")
                 print_log("Query:", query)
                 print_log("Args: ", args)
+                raise
                 exit()
     print_log(f"Processed {rows_count} rows in table {table}. ")
     print_log(f"{modified} paths have been modified.")
@@ -402,7 +335,7 @@ def update_xml(file: Path, replace_dict: dict, replace_func) -> None:
     for el in root.iter():
         # Exclude a few tags known to contain no paths.
         # biography, outline: These often contain lots of text (= slow to process) and generate
-        # false-positives for the missed path detection (see recursive_root_path_replacer)
+        # false-positives for the missed path detection (see nested_root_path_replacer)
         if el.tag in ("biography", "outline"):
             continue
         el.text, mo, ig = replace_func(el.text, replace_dict)
@@ -419,6 +352,9 @@ USER_WANTS_INPLACE_WARNING = True
 def get_target(
         source: Path,
         target: Path,
+        source_root,
+        original_root,
+        target_root,
         replacements: dict,
         no_log: bool = False,
 ) -> Path:
@@ -437,9 +373,10 @@ def get_target(
     if len(target.parts) == 1 and target.name.startswith("auto"):
         if target.name == "auto-existing":
             skip_copy = True
-        original_source = ORIGINAL_ROOT / source.relative_to(SOURCE_ROOT)
-        target, idgaf1, idgaf2 = recursive_root_path_replacer(original_source, to_replace=replacements)
-        target, idgaf1, idgaf2 = recursive_root_path_replacer(target, to_replace=FS_PATH_REPLACEMENTS)
+        original_source = original_root / source.relative_to(source_root)
+        # print(f'original_source={original_source}')
+        target, idgaf1, idgaf2 = nested_root_path_replacer(original_source, to_replace=replacements)
+        target, idgaf1, idgaf2 = nested_root_path_replacer(target, to_replace=FS_PATH_REPLACEMENTS)
         target = Path(target)
         # print(f'!!!target={target}')
         if not target.is_absolute():
@@ -447,7 +384,8 @@ def get_target(
                 # Otherwise the line below will make target relative to the _root_ of target_root
                 # instead of relative to target_root.
                 target = target.relative_to("/")
-            target = TARGET_ROOT / target
+            target = target_root / target
+        # print(f'target={target}')
         # print(f'!>>target={target}')
 
     # If source and target are the same there are two possibilities:
@@ -461,6 +399,7 @@ def get_target(
     # Program: Are you sure? User: I don't know [yet]
     usure = "idk"
     if source == target:
+        # TODO: probably just error here.
         if USER_WANTS_INPLACE_WARNING:
             while usure not in "yna":
                 usure = input("Warning! Working on original file! Continue? [Y]es, [N]o, [A]lways ")
@@ -496,8 +435,8 @@ def process_file(
     if tables is None:
         tables = dict()
 
-    # What do you want me to do with no input?
     if not target:
+        raise Exception('What do you want me to do with no input?')
         return
 
     # Files only.
@@ -548,9 +487,9 @@ def process_file(
     # If we're updating path ids we also need to check the paths of the files themselves
     # and move them if they're relative to a path.
     # This obviously leaves empty folders behind, which are cleaned up afterwards.
-    if replace_func == recursive_id_path_replacer:
+    if replace_func == nested_id_path_replacer:
         source = target
-        target, modified, ignored = recursive_id_path_replacer(source, replacements)
+        target, modified, ignored = nested_id_path_replacer(source, replacements)
         if modified:
             print_log("Changing ID in filepath: ->", target)
             target = Path(target)
@@ -558,7 +497,7 @@ def process_file(
             source.replace(target)
 
 
-def process_files(lst: list, process_func, replace_func, path_replacements):
+def process_files(lst: list, process_func, replace_func, path_replacements, process_func_kwargs):
     """
     Processes the todo_list.
     It handles potential wildcards in the file paths and keeps track
@@ -573,46 +512,42 @@ def process_files(lst: list, process_func, replace_func, path_replacements):
     process_func: function to apply to jobs of lst.
     replace_func: function used by process_func to do the replacing of paths, ...
     """
+    print('Calling process_files')
     done = set()
-    for job in lst:
+    for job_idx, job in enumerate(lst):
         if "no_log" not in job:
             job["no_log"] = False
         source = job["source"]
+        source_root = job['source_root']
+
         print_log(f"Current job from todo_list: {source}")
+        expanded_jobs = []
         if "*" in str(source):
             # Path has wildcards, process all matching files.
             #
             # Ironically Path.glob can't handle Path objects, hence the need
             # to convert them to a string...
             # It is expected that all these paths are relative to source_root.
-
-            # FIXME: On Linux installs, the pieces of the jellyfin system might
-            # be scattered across different roots, so we need to add the
-            # concept of a per "variant-directory" root.
-            source = source.relative_to(SOURCE_ROOT)
-            for src in SOURCE_ROOT.glob(str(source)):
+            rel_source = source.relative_to(source_root)
+            for src in source_root.glob(str(rel_source)):
                 if src.is_dir():
                     continue
-                if src in done:
-                    # File has already been processed by this script.
-                    continue
-                done.add(src)
 
-                target = get_target(
-                    source=src,
-                    target=job["target"],
-                    replacements=path_replacements,
-                    no_log=job["no_log"],
-                )
-
-                # pass the job as is but with non-wildcard source path.
-                process_func(
-                    replace_func=replace_func,
-                    source=src,
-                    target=target,
-                    **{k: v for k, v in job.items() if k not in ("source", "target")},
-                )
+                expanded_jobs.append({
+                    'source': src,
+                    'target': job['target'],
+                })
         else:
+            # No wildcards, just add the single file to the queue
+            # Just a single file
+            expanded_jobs.append({
+                'source': source,
+                'target': job['target'],
+            })
+
+        for exjob in expanded_jobs:
+            source = exjob['source']
+
             # No wildcards, process the path directly - if it hasn't already
             # been processed.
             if source in done:
@@ -622,25 +557,28 @@ def process_files(lst: list, process_func, replace_func, path_replacements):
             target = get_target(
                 source=source,
                 target=job["target"],
+                source_root=job['source_root'],
+                original_root=job['original_root'],
+                target_root=job['target_root'],
                 replacements=path_replacements,
                 no_log=job["no_log"],
             )
+            if process_func_kwargs == 'process_file':
+                process_kwargs = {k: v for k, v in job.items() if k not in (
+                    "source", "target", "source_root", "original_root", "target_root")}
+            else:
+                # hack to remove worse global code, need to cleanup
+                process_kwargs = process_func_kwargs
 
+            # process_func can either be
+            # update_db_table_ids or process_file
             process_func(
                 replace_func=replace_func,
                 source=source,
                 target=target,
-                **{k: v for k, v in job.items() if k not in ("source", "target")},
+                **process_kwargs,
             )
         print_log("")
-
-
-def get_dotnet_MD5(s: str):
-    """
-    Note: The .NET .Unicode method encodes as UTF16 little endian:
-    https://docs.microsoft.com/en-us/dotnet/api/system.text.encoding.unicode?view=net-6.0
-    """
-    return hashlib.md5(s.encode("utf-16-le")).digest()
 
 
 def update_db_table_ids(
@@ -648,21 +586,26 @@ def update_db_table_ids(
         target,
         tables,
         preview=False,
-        **kwargs
+        IDS=None,
+        # **kwargs
 ):
     """
-    Derived/copied from update_db_table. I couldn't see a good way to do this without
-    copying. The data structures and processing are too different for path and id jobs.
-    Note: kwargs is due to how process_files works. It passes a lot of stuff from the
-    job list that's not needed here.
-    """
-    global IDS
+    Derived/copied from update_db_table.
+    I couldn't see a good way to do this without copying. The data structures and processing are too different for path and id jobs.
 
+    OLD COMMENT:
+        Note: kwargs is due to how process_files works. It passes a lot of stuff from the
+        job list that's not needed here.
+
+    MY COMMENT:
+        NO! Bad! DO IT BETTER! GFAGFGAJK!@!!!
+    """
     if not os.path.exists(source):
         print_log("Database source={source} does not exist, skipping")
         return
 
     print_log("Updating Item IDs in database... ")
+    assert IDS is not None
 
     # Initialize sqlite3 objects
     con = sqlite3.connect(target)
@@ -716,8 +659,9 @@ def update_db_table_ids(
 
 
 def get_ids():
-    global LIBRARY_DB_TARGET_PATH, IDS
+    global LIBRARY_DB_TARGET_PATH
 
+    print(f'Connect to LIBRARY_DB_TARGET_PATH={LIBRARY_DB_TARGET_PATH}')
     con = sqlite3.connect(LIBRARY_DB_TARGET_PATH)
     cur = con.cursor()
 
@@ -784,63 +728,7 @@ def get_ids():
         for id, newpath in duplicates_new:
             print_log(f"  Item ID: {bid2sid(id)},  Paths (old -> new): {duplicates_old[id]} -> {newpath}")
         input("Press Enter to continue or CTRL+C to abort. ")
-
-
-def update_ids():
-    return
-
-
-def jf_date_str_to_python_ns(s: str):
-    # Python datetime has only support for microseconds because of resolution
-    # problems. To convert from a date+time to ticks, the fractional seconds
-    # part doesn't matter anyway (it remains the same). Hence, it's cut off
-    # and added back later.
-    subseconds = "0"
-    if "." in s:
-        s, subseconds = s.rsplit(".", 1)
-    # In case subseconds has a higher resolution than 100ns and/or additional
-    # information (f.ex. timezone, which is known to be UTC+00:00 for jellyfin),
-    # Strip all of it.
-    # Add trailing zeros til the ns digit, then convert to int, and we have ns.
-    subseconds = int(subseconds.split("+")[0].rstrip(ascii_letters).ljust(9, "0"))
-    # Add explicit information about the timezone (UTC+00:00)
-    s += "+00:00"
-    t = int(datetime.datetime.fromisoformat(s).timestamp())
-    # Convert to ns
-    t *= 1000000000
-    t += subseconds
-    return t
-
-
-def get_datestr_from_python_time_ns(time_ns: int):
-    """
-    Convert a _python_ timestamp (float seconds since epoch, which is os dependent)
-    to a ISO like date string as found in the jellyfin database. I have no idea
-    if this works for all OS'es in all timezones. Very likely not but that whole
-    topic is about as much of a mess as jellyfin's databases. If you got any issues,
-    I'm sorry. If you find a solution, them, please let me know!
-    """
-    # Datetime has no support for sub-microsecond resolution (which is required here).
-    # Doesn't matter anyway, we can add the whole sub-second part afterwards.
-    time_s = time_ns // 1000000000
-    time_frac_s_100ns = (time_ns // 100) % 10000000
-    timestamp = datetime.datetime.utcfromtimestamp(time_s).isoformat(sep=" ", timespec="seconds")
-    # Add back the sub-seconds part and the UTC time zone
-    timestamp += "." + str(time_frac_s_100ns).rjust(7, "0").rstrip("0") + "Z"
-    return timestamp
-
-
-def delete_empty_folders(dir: str):
-    dir = Path(dir)
-
-    done = False
-    while not done:
-        done = True
-        for p in dir.glob("**"):
-            if not list(p.iterdir()):
-                print_log("Removing empty folder", p)
-                p.rmdir()
-                done = False
+    return IDS
 
 
 def update_file_dates():
@@ -868,7 +756,7 @@ def update_file_dates():
             continue
         # Determine file path as seen by this script (see FS_PATH_REPLACEMENTS for details)
         # Code taken from get_target
-        target, idgaf1, idgaf2 = recursive_root_path_replacer(target, to_replace=FS_PATH_REPLACEMENTS)
+        target, idgaf1, idgaf2 = nested_root_path_replacer(target, to_replace=FS_PATH_REPLACEMENTS)
         target = Path(target)
         # print(f'!!!target={target}')
         if not target.is_absolute():
@@ -910,18 +798,22 @@ def main():
     print_log("Starting Jellyfin Database Migration")
 
     ### Copy relevant files and adjust all paths to the new locations.
-    print_log("Copy relevant files and adjust all paths to the new locations.")
+    print_log("STEP 1. Copy relevant files and adjust all paths to the new locations.")
+
     process_files(
         TODO_LIST_PATHS,
         process_func=process_file,
-        replace_func=recursive_root_path_replacer,
+        replace_func=nested_root_path_replacer,
         path_replacements=PATH_REPLACEMENTS,
+        process_func_kwargs='process_file'
     )
 
+    raise Exception('Early Stop')
+
     ### Update IDs
-    print_log("Update IDs.")
+    print_log("STEP2. Update IDs.")
     # Generate IDs based on those new paths and save them in the global variable
-    get_ids()
+    IDS = get_ids()
     # ID types occurring in paths (<- search for that to find another comment with more details if you missed it)
     # Include/Exclude types (see get_ids) to specify which are used for looking through paths.
     # Currently, all are included, just to be safe.
@@ -942,28 +834,33 @@ def main():
     for i, job in enumerate(TODO_LIST_ID_PATHS):
         TODO_LIST_ID_PATHS[i]["replacements"] = id_replacements_path
 
+    exit()
+
     # Replace all paths with ids - both in the file system and within files.
-    print_log("Replace all paths with ids.")
+    print_log("STEP 3.1 Replace all paths with ids.")
     process_files(
         TODO_LIST_ID_PATHS,
         process_func=process_file,
-        replace_func=recursive_id_path_replacer,
+        replace_func=nested_id_path_replacer,
         path_replacements={**PATH_REPLACEMENTS, **id_replacements_path},
+        process_func_kwargs='process_file'
     )
+
     # Clean up empty folders that may be left behind in the target directory
-    #delete_empty_folders(TARGET_ROOT)
+    #delete_empty_folders(todo, there might be multiple target roots)
 
     # Replace remaining ids.
-    print_log("Replace remaining ids.")
+    print_log("STEP 3.2 Replace remaining ids.")
     process_files(
         TODO_LIST_IDS,
         process_func=update_db_table_ids,
         replace_func=None,
         path_replacements=PATH_REPLACEMENTS,
+        process_func_kwargs={'IDS': IDS}
     )
 
     # Finally, update the file dates in the db.
-    print_log("Update the file dates.")
+    print_log("STEP 4. Update the file dates.")
     update_file_dates()
 
     print_log("")

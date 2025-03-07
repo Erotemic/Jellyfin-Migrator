@@ -6,40 +6,94 @@ from jellyfin_migrator.demo.jellyfin_init import add_demo_media_libraries
 from jellyfin_migrator.demo.jellyfin_init import is_server_alive
 
 
-def ensure_apt_variant(reset=False):
+class JellyfinAptContainer(OCIContainer):
     """
-    Using an Ubuntu 22.04 image, setup a jellyfin server.
+    Defines an Ubuntu 22.04 image that can setup a jellyfin server.
     """
-    paths = grab_demo_media()
-    media_dpath = paths['media']
-    port = 8098
-    engine = OCIContainerEngineConfig(
-        "docker",
-        disable_host_mount=True,
-        create_args=(
-            '--publish',
-            f'{port}:8096/tcp',
-            '--mount',
-            f'type=bind,source={media_dpath},target=/media'
-        )
-    )
-    self = OCIContainer(
-        image='ubuntu:22.04',
-        name='jellyfin_demo_apt_variant',
-        engine=engine
-    )
-    if reset:
-        self.remove(force=True, volumes=True)
 
-    if self.running():
-        self.connect()
-    elif self.exists():
-        self.start()
-        self.connect()
-    else:
+    def __init__(self, port=8098, oci_engine='docker', mounts=None):
+        self.port = port
+
+        # Always mount the demo media path
+        paths = grab_demo_media()
+        media_dpath = paths['media']
+        self.internal_media_dpath = '/data/jellyfin/media'
+        _mounts = [
+            {'source': media_dpath, 'target': self.internal_media_dpath}
+        ]
+        if mounts is not None:
+            _mounts.extend(mounts)
+
+        mount_args = []
+        for mount in _mounts:
+            mount_args.append('--mount')
+            source = mount['source']
+            target = mount['target']
+            mount_args.append(f'type=bind,source={source},target={target}')
+
+        engine = OCIContainerEngineConfig(
+            oci_engine,
+            disable_host_mount=True,
+            create_args=(
+                '--publish',
+                f'{port}:8096/tcp',
+                *mount_args
+            )
+        )
+        super().__init__(
+            image='ubuntu:22.04',
+            name='jellyfin_demo_apt_variant',
+            engine=engine
+        )
+
+    def ensure(self):
+        """
+        Check if the server is running, if not, create and set it up.
+        """
+        print('Ensuring server')
+        if self.running():
+            print('Ensuring is running, connecting')
+            self.connect()
+        elif self.exists():
+            print('Ensuring is not running, but exists, starting')
+            self.start()
+            print('... connecting')
+            self.connect()
+        else:
+            print('Ensuring does not exist, needs to be created')
+            self.create()
+            print('... starting')
+            self.start()
+            print('... setup')
+            self.setup_server()
+        if not self.is_alive():
+            print('server is not alive, need to run')
+            self._run_server()
+        else:
+            print('server is alive')
+
+    def reset(self):
+        self.remove(force=True, volumes=True)
         self.create()
         self.start()
+        self.setup_server()
 
+    def is_alive(self):
+        # FIXME: this doesn't work all the time for some reason
+        return is_server_alive(self.port)
+
+    def _run_server(self):
+        import time
+        ub.cmd(f'docker exec --detach {self.name} /usr/bin/jellyfin --webdir=/usr/share/jellyfin/web --ffmpeg=/usr/lib/jellyfin-ffmpeg/ffmpeg')
+        # Block until server is online
+        while not self.is_alive():
+            print('waiting')
+            time.sleep(0.1)
+
+    def setup_server(self):
+        """
+        Only run on an uninitialized server
+        """
         # Write the script into the container an call it to setup the server.
         text = ub.codeblock(
             '''
@@ -83,21 +137,16 @@ def ensure_apt_variant(reset=False):
         # import time
         # time.sleep(3)
         # Start the server
-        ub.cmd(f'docker exec --detach {self.name} /usr/bin/jellyfin --webdir=/usr/share/jellyfin/web --ffmpeg=/usr/lib/jellyfin-ffmpeg/ffmpeg')
-        import time
-        while not is_server_alive(port):
-            print('waiting')
-            time.sleep(0.1)
+        print('Starting the server')
+        self._run_server()
 
         # Initialize the server with a user/pass: jellyfin/jellyfin
-        configure_initial_server(port)
+        print('Configuring server')
+        configure_initial_server(self.port)
 
         # Add media for the server to manage
-        add_demo_media_libraries(port)
-
-    if not is_server_alive(port):
-        ub.cmd(f'docker exec --detach {self.name} /usr/bin/jellyfin --webdir=/usr/share/jellyfin/web --ffmpeg=/usr/lib/jellyfin-ffmpeg/ffmpeg')
-    return self
+        print('Adding media libraries')
+        add_demo_media_libraries(self.port, media_dpath=self.internal_media_dpath)
 
 
 if __name__ == '__main__':
@@ -105,4 +154,4 @@ if __name__ == '__main__':
     CommandLine:
         python ~/code/Jellyfin-Migrator/jellyfin_migrator/demo/jellyfin_apt_variant.py
     """
-    ensure_apt_variant()
+    JellyfinAptContainer().ensure()

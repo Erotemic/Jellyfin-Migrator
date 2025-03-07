@@ -404,6 +404,16 @@ class OCIContainer:
 
         return [PurePosixPath(p) for p in path_strings]
 
+    def exec(self, command, cwd):
+        """
+        Variant of call that uses a separte process to execute a command.
+
+        Helpful when you need to see stderr. Will have much better stdout /
+        stderr reporting, and we can capture with ubelt, the downside is
+        that it requires a new popen process.
+        """
+        return ub.cmd(f'{self.engine.name} exec --workdir {cwd} {self.name} {command}', verbose=3)
+
     def call(
         self,
         args: Sequence[PathOrStr],
@@ -412,14 +422,7 @@ class OCIContainer:
         cwd: PathOrStr | None = None,
     ) -> str:
         """
-        TODO:
-            add second variant for calling a command inside a container via something like:
-
-                ub.cmd(f'{self.engine.name} exec --workdir {cwd} {self.name} {command}', verbose=3)
-
-            which will have much better stdout / stderr reporting, and we can
-            capture with ubelt, the downside is that it requires a new popen
-            process.
+        Calls a process based on the existing process handle.
         """
         if cwd is None:
             # Podman does not start the a container in a specific working dir
