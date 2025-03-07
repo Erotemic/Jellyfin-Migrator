@@ -23,6 +23,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from shutil import copy
 from time import time
+from functools import partial
 
 from jellyfin_migrator.utils import get_dotnet_MD5
 from jellyfin_migrator.utils import jf_date_str_to_python_ns
@@ -497,7 +498,7 @@ def process_file(
             source.replace(target)
 
 
-def process_files(lst: list, process_func, replace_func, path_replacements, process_func_kwargs):
+def process_files(lst: list, process_func, replace_func, path_replacements, use_extra_kwargs):
     """
     Processes the todo_list.
     It handles potential wildcards in the file paths and keeps track
@@ -563,12 +564,12 @@ def process_files(lst: list, process_func, replace_func, path_replacements, proc
                 replacements=path_replacements,
                 no_log=job["no_log"],
             )
-            if process_func_kwargs == 'process_file':
+            if use_extra_kwargs:
                 process_kwargs = {k: v for k, v in job.items() if k not in (
                     "source", "target", "source_root", "original_root", "target_root")}
             else:
                 # hack to remove worse global code, need to cleanup
-                process_kwargs = process_func_kwargs
+                process_kwargs = {}
 
             # process_func can either be
             # update_db_table_ids or process_file
@@ -805,7 +806,7 @@ def main():
         process_func=process_file,
         replace_func=nested_root_path_replacer,
         path_replacements=PATH_REPLACEMENTS,
-        process_func_kwargs='process_file'
+        use_extra_kwargs=True,
     )
 
     raise Exception('Early Stop')
@@ -843,7 +844,7 @@ def main():
         process_func=process_file,
         replace_func=nested_id_path_replacer,
         path_replacements={**PATH_REPLACEMENTS, **id_replacements_path},
-        process_func_kwargs='process_file'
+        use_extra_kwargs=True,
     )
 
     # Clean up empty folders that may be left behind in the target directory
@@ -853,10 +854,10 @@ def main():
     print_log("STEP 3.2 Replace remaining ids.")
     process_files(
         TODO_LIST_IDS,
-        process_func=update_db_table_ids,
+        process_func=partial(update_db_table_ids, IDS=IDS),
         replace_func=None,
         path_replacements=PATH_REPLACEMENTS,
-        process_func_kwargs={'IDS': IDS}
+        use_extra_kwargs=False,
     )
 
     # Finally, update the file dates in the db.
