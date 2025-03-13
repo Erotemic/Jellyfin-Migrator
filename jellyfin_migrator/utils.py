@@ -23,16 +23,19 @@ def nested_id_path_replacer(d, to_replace: dict):
     starts at the beginning of the id string.
     """
     modified, ignored = 0, 0
+    warnings = []
     if isinstance(d, dict):
         for k, v in d.items():
-            d[k], mo, ig = nested_id_path_replacer(v, to_replace)
+            d[k], mo, ig, wrns = nested_id_path_replacer(v, to_replace)
             modified += mo
             ignored  += ig
+            warnings += wrns
     elif isinstance(d, list):
         for i, e in enumerate(d):
-            d[i], mo, ig = nested_id_path_replacer(e, to_replace)
+            d[i], mo, ig, wrns = nested_id_path_replacer(e, to_replace)
             modified += mo
             ignored  += ig
+            warnings += wrns
     elif isinstance(d, str) or isinstance(d, pathlib.PurePath):
         try:
             p = Path(d)
@@ -93,7 +96,7 @@ def nested_id_path_replacer(d, to_replace: dict):
                 # potential paths that haven't been altered. In case you suspect that something is
                 # overlooked, check out ./id_scanner.py.
                 # ignored is purely maintained for signature compatibility with nested_root_path_replacer.
-    return d, modified, ignored
+    return d, modified, ignored, warnings
 
 
 def jf_date_str_to_python_ns(s: str):
@@ -148,3 +151,77 @@ def delete_empty_folders(dir: str):
                 done = False
 
 
+def _single_file_path_replacer(d, to_replace: dict):
+    modified, ignored = 0, 0
+    warnings = []
+    try:
+        p = Path(d)
+    except Exception:
+        # This actually doesn't occur I think; Path() can pretty much convert any string into a Path
+        # object (which is equivalent to saying it doesn't have any restrictions for filenames).
+        ignored += 1
+    else:
+        found = False
+        for src, dst in to_replace.items():
+            if p.is_relative_to(src):
+                # This filters out all the "garbage" paths that actually were no paths to begin with
+                # and of course all the paths that are actually not relative to the src, dst couple
+                # currently checked.
+                p = dst / p.relative_to(src)
+                # I guess 99% of the users won't migrate _to_ windows but the script could generate
+                # \ paths anyways.
+                # p.as_posix() makes sure that we always get a string with "/". Otherwise, on windows,
+                # str(p) would automatically return "\" paths.
+                d = p.as_posix().replace("/", to_replace["target_path_slash"])
+                found = True
+                break
+        if found:
+            modified += 1
+        else:
+            ignored += 1
+            # No need to consider all the Path("sometext") objects. This might not be 100%
+            # accurate, but it eliminates 99.9999% of the false-positives. This output is
+            # after all only to give you a hint whether you missed a path.
+            # Also exclude URLs. Btw: pathlib can be quite handy for messing with URLs.
+            if len(p.parents) > 1 \
+                    and not str(d).startswith("https:") \
+                    and not str(d).startswith("http:") \
+                    and not to_replace.get("log_no_warnings", False):
+                warnings.append(f"No entry for this (presumed) path: {d}")
+                # print_log(f"No entry for this (presumed) path: {d}")
+    return d, modified, ignored, warnings
+
+
+def nested_root_path_replacer(d, to_replace: dict):
+    """
+    Recursively replace all paths in "d" which can be
+     * a path object
+     * a path string
+     * a dictionary (only values are checked, no keys).
+     * a list
+     * any nested structure of the above.
+     * anything else is returned unmodified.
+    Returns the (un)modified object as well as how many items have been modified or ignored.
+    """
+    import pathlib
+    # TODO: would likely be much faster with IndexableWalker
+    modified, ignored = 0, 0
+    warnings = []
+    if isinstance(d, dict):
+        for k, v in d.items():
+            d[k], mo, ig, wrn = nested_root_path_replacer(v, to_replace)
+            modified += mo
+            ignored  += ig
+            warnings += wrn
+    elif isinstance(d, list):
+        for i, e in enumerate(d):
+            d[i], mo, ig, wrn = nested_root_path_replacer(e, to_replace)
+            modified += mo
+            ignored  += ig
+            warnings += wrn
+    elif isinstance(d, str) or isinstance(d, pathlib.PurePath):
+        d, mo, ig, wrn = _single_file_path_replacer(d, to_replace)
+        modified += mo
+        ignored += ig
+        warnings += wrn
+    return d, modified, ignored, warnings

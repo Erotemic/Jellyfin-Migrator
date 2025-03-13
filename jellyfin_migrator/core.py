@@ -28,7 +28,7 @@ from functools import partial
 from jellyfin_migrator.utils import get_dotnet_MD5
 from jellyfin_migrator.utils import jf_date_str_to_python_ns
 from jellyfin_migrator.utils import get_datestr_from_python_time_ns
-# from jellyfin_migrator.utils import nested_root_path_replacer
+from jellyfin_migrator.utils import nested_root_path_replacer
 from jellyfin_migrator.utils import nested_id_path_replacer
 from jellyfin_migrator.id_scanner import (
     bid2sid, sid2did, sid2bid, convert_ancestor_id
@@ -80,76 +80,6 @@ def print_log(*args, **kwargs):
         LOGGING_NEWLINE = False
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         print(dt, *args, **kwargs, file=f)
-
-
-def _single_file_path_replacer(d, to_replace: dict):
-    modified, ignored = 0, 0
-    try:
-        p = Path(d)
-    except Exception:
-        # This actually doesn't occur I think; Path() can pretty much convert any string into a Path
-        # object (which is equivalent to saying it doesn't have any restrictions for filenames).
-        ignored += 1
-    else:
-        found = False
-        for src, dst in to_replace.items():
-            if p.is_relative_to(src):
-                # This filters out all the "garbage" paths that actually were no paths to begin with
-                # and of course all the paths that are actually not relative to the src, dst couple
-                # currently checked.
-                p = dst / p.relative_to(src)
-                # I guess 99% of the users won't migrate _to_ windows but the script could generate
-                # \ paths anyways.
-                # p.as_posix() makes sure that we always get a string with "/". Otherwise, on windows,
-                # str(p) would automatically return "\" paths.
-                d = p.as_posix().replace("/", to_replace["target_path_slash"])
-                found = True
-                break
-        if found:
-            modified += 1
-        else:
-            ignored += 1
-            # No need to consider all the Path("sometext") objects. This might not be 100%
-            # accurate, but it eliminates 99.9999% of the false-positives. This output is
-            # after all only to give you a hint whether you missed a path.
-            # Also exclude URLs. Btw: pathlib can be quite handy for messing with URLs.
-            if len(p.parents) > 1 \
-                    and not str(d).startswith("https:") \
-                    and not str(d).startswith("http:") \
-                    and not to_replace.get("log_no_warnings", False):
-                print_log(f"No entry for this (presumed) path: {d}")
-    return d, modified, ignored
-
-
-def nested_root_path_replacer(d, to_replace: dict):
-    """
-    Recursively replace all paths in "d" which can be
-     * a path object
-     * a path string
-     * a dictionary (only values are checked, no keys).
-     * a list
-     * any nested structure of the above.
-     * anything else is returned unmodified.
-    Returns the (un)modified object as well as how many items have been modified or ignored.
-    """
-    import pathlib
-    # TODO: would likely be much faster with IndexableWalker
-    modified, ignored = 0, 0
-    if isinstance(d, dict):
-        for k, v in d.items():
-            d[k], mo, ig = nested_root_path_replacer(v, to_replace)
-            modified += mo
-            ignored  += ig
-    elif isinstance(d, list):
-        for i, e in enumerate(d):
-            d[i], mo, ig = nested_root_path_replacer(e, to_replace)
-            modified += mo
-            ignored  += ig
-    elif isinstance(d, str) or isinstance(d, pathlib.PurePath):
-        d, mo, ig = _single_file_path_replacer(d, to_replace)
-        modified += mo
-        ignored += ig
-    return d, modified, ignored
 
 
 def update_db_table(
@@ -236,14 +166,18 @@ def update_db_table(
                 # There are numerous rows that have empty columns which would result in an error
                 # from json.loads. Just skip them
                 data = json.loads(data)
-                data, mo, ig = replace_func(data, replace_dict)
+                data, mo, ig, wrns = replace_func(data, replace_dict)
+                for warning in wrns:
+                    print_log(warning)
                 modified += mo
                 ignored  += ig
                 result[json_columns[i]] = json.dumps(data)
         for i, path in enumerate(paths):
             # One could also skip the empty objects here, but recursive_path_replacer handles them
             # just fine (leaves them untouched).
-            path, mo, ig = replace_func(path, replace_dict)
+            path, mo, ig, wrns = replace_func(path, replace_dict)
+            for warning in wrns:
+                print_log(warning)
             modified += mo
             ignored  += ig
             result[path_columns[i]] = path
@@ -265,7 +199,9 @@ def update_db_table(
                     continue
                 img_properties = img_properties.split("*")
                 # path = first property
-                img_properties[0], mo, ig = replace_func(img_properties[0], replace_dict)
+                img_properties[0], mo, ig, wnrs = replace_func(img_properties[0], replace_dict)
+                for warning in wrns:
+                    print_log(warning)
                 imgs[j] = "*".join(img_properties)
                 modified += mo
                 ignored  += ig
@@ -339,7 +275,9 @@ def update_xml(file: Path, replace_dict: dict, replace_func) -> None:
         # false-positives for the missed path detection (see nested_root_path_replacer)
         if el.tag in ("biography", "outline"):
             continue
-        el.text, mo, ig = replace_func(el.text, replace_dict)
+        el.text, mo, ig, wrns = replace_func(el.text, replace_dict)
+        for warning in wrns:
+            print_log(warning)
         modified += mo
         ignored  += ig
     print_log(f"Processed {ignored + modified} elements. {modified} paths have been modified.")
@@ -376,8 +314,10 @@ def get_target(
             skip_copy = True
         original_source = original_root / source.relative_to(source_root)
         # print(f'original_source={original_source}')
-        target, idgaf1, idgaf2 = nested_root_path_replacer(original_source, to_replace=replacements)
-        target, idgaf1, idgaf2 = nested_root_path_replacer(target, to_replace=FS_PATH_REPLACEMENTS)
+        target, idgaf1, idgaf2, wrns1 = nested_root_path_replacer(original_source, to_replace=replacements)
+        target, idgaf1, idgaf2, wrns2 = nested_root_path_replacer(target, to_replace=FS_PATH_REPLACEMENTS)
+        for warning in wrns1 + wrns2:
+            print_log(warning)
         target = Path(target)
         # print(f'!!!target={target}')
         if not target.is_absolute():
@@ -417,7 +357,8 @@ def get_target(
         if not target.parent.exists():
             target.parent.mkdir(parents=True)
         if not no_log:
-            print_log("Copying...", target, end=" ")
+            print_log(f"Copy... {source} -> {target}", end=" ")
+
         copy(source, target)
         if not no_log:
             print_log("Done.")
@@ -472,7 +413,9 @@ def process_file(
         # .mblink files only contain a path, nothing else.
         with open(target, "r", encoding="utf-8") as f:
             path = f.read()
-        path, modified, ignored = replace_func(path, replacements)
+        path, modified, ignored, wrns = replace_func(path, replacements)
+        for warning in wrns:
+            print_log(warning)
         print_log(f"Processed {modified + ignored} paths, {modified} paths have been modified.")
         with open(target, "w", encoding="utf-8") as f:
             f.write(path)
@@ -482,7 +425,9 @@ def process_file(
         # them by recursive_path_replacer which handles these structures.
         with open(target, "r", encoding="utf-8") as f:
             j = json.load(f)
-        j, modified, ignored = replace_func(j, replacements)
+        j, modified, ignored, wrns = replace_func(j, replacements)
+        for warning in wrns:
+            print_log(warning)
         print_log(f"Processed {modified + ignored} paths, {modified} paths have been modified.")
         with open(target, "w", encoding="utf-8") as f:
             # indent 2 seems to be the default formatting for jellyfin json files.
@@ -493,7 +438,9 @@ def process_file(
     # This obviously leaves empty folders behind, which are cleaned up afterwards.
     if replace_func == nested_id_path_replacer:
         source = target
-        target, modified, ignored = nested_id_path_replacer(source, replacements)
+        target, modified, ignored, wrns = nested_id_path_replacer(source, replacements)
+        for warning in wrns:
+            print_log(warning)
         if modified:
             print_log("Changing ID in filepath: ->", target)
             target = Path(target)
@@ -762,7 +709,9 @@ def update_file_dates():
             continue
         # Determine file path as seen by this script (see FS_PATH_REPLACEMENTS for details)
         # Code taken from get_target
-        target, idgaf1, idgaf2 = nested_root_path_replacer(target, to_replace=FS_PATH_REPLACEMENTS)
+        target, idgaf1, idgaf2, wrns = nested_root_path_replacer(target, to_replace=FS_PATH_REPLACEMENTS)
+        for warning in wrns:
+            print_log(warning)
         target = Path(target)
         # print(f'!!!target={target}')
         if not target.is_absolute():

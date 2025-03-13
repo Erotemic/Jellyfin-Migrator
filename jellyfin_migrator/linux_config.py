@@ -284,7 +284,7 @@ TODO_LIST_PATHS = [
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
         "copy_only": True,
-        "no_log": True,
+        "no_log": False,
     },
 
     {
@@ -352,7 +352,7 @@ TODO_LIST_PATHS = [
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
         "copy_only": True,
-        "no_log": True,
+        "no_log": False,
     },
 ]
 
