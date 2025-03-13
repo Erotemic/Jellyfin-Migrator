@@ -191,12 +191,24 @@ class OCIContainer:
             pass
         return f"--platform={oci_platform.value}", f"--pull={pull}"
 
+    def engine_cmd(self, command, verbose=0, check=True):
+        """
+        Call an engine command. (i.e. docker or podman) followed by whatever
+        the command is.
+        """
+        command = _resolve_command(command, as_text=False)
+        info = ub.cmd([self.engine.name] + command, verbose=verbose, check=check)
+        return info
+
     def exists(self):
-        info = ub.cmd([self.engine.name, 'ps', '-q', '-f', 'name=' + self.name + '$'], verbose=3)
+        """
+        Check if the container exists.
+        """
+        info = self.engine_cmd(['ps', '-aq', '-f', 'name=' + self.name + '$'], verbose=0, check=True)
         return bool(info.stdout.strip())
 
     def running(self):
-        info = ub.cmd([self.engine.name, 'ps', '-q', '-f', 'status=running', '-f', 'name=' + self.name + '$'], verbose=0)
+        info = self.engine_cmd(['ps', '-q', '-f', 'status=running', '-f', 'name=' + self.name + '$'], verbose=0, check=True)
         return bool(info.stdout.strip())
 
     def ensure(self):
@@ -205,18 +217,11 @@ class OCIContainer:
             self.connect()
 
     def status(self):
-        info = ub.cmd([self.engine.name, 'container', 'inspect', '-f', '{{.State.Status}}', self.name], verbose=0)
+        info = self.engine_cmd(['container', 'inspect', '-f', '{{.State.Status}}', self.name], verbose=0)
         return info.stdout.strip()
 
     def start(self):
-        ub.cmd(
-            [
-                self.engine.name,
-                "start",
-                self.name,
-            ],
-            verbose=3)
-
+        self.engine_cmd(["start", self.name], verbose=3)
         self.connect()
 
     def create(self):
@@ -253,9 +258,8 @@ class OCIContainer:
         shell_args = ["linux32", "/bin/bash"] if simulate_32_bit else ["/bin/bash"]
 
         # subprocess.run
-        ub.cmd(
+        self.engine_cmd(
             [
-                self.engine.name,
                 "create",
                 # "--env=CIBUILDWHEEL",
                 # "--env=SOURCE_DATE_EPOCH",
@@ -277,7 +281,7 @@ class OCIContainer:
         """
         Save the state of this container to an image.
         """
-        ret = ub.cmd(f'{self.engine.name} commit {self.name} {image_name}')
+        ret = self.engine_cmd(f'commit {self.name} {image_name}')
         ret.check_returncode()
 
     def connect(self):
@@ -420,9 +424,9 @@ class OCIContainer:
         that it requires a new popen process.
         """
         if cwd is None:
-            return ub.cmd(f'{self.engine.name} exec {self.name} {command}', verbose=verbose)
+            return self.engine_cmd(f'exec {self.name} {command}', verbose=verbose)
         else:
-            return ub.cmd(f'{self.engine.name} exec --workdir {cwd} {self.name} {command}', verbose=verbose)
+            return self.engine_cmd(f'exec --workdir {cwd} {self.name} {command}', verbose=verbose)
 
     def call(
         self,
@@ -576,3 +580,48 @@ def call(
     if not capture_stdout:
         return None
     return typing.cast(str, result.stdout)
+
+
+def _resolve_command(command, as_text=False):
+    """
+    Transform the input into the appropriate Tuple[str] or str form.
+    """
+    # Determine if command is specified as text or a tuple
+    if isinstance(command, str):
+        command_text = command
+        command_tup = None
+    elif isinstance(command, os.PathLike):
+        command_text = os.fspath(command)
+        command_tup = None
+    else:
+        import shlex
+        command_parts = []
+        # Allow the user to specify paths as part of the command
+        for part in command:
+            if isinstance(part, os.PathLike):
+                part = os.fspath(part)
+            command_parts.append(part)
+        command_tup = list(command_parts)
+        command_text = ' '.join(list(map(shlex.quote, command_tup)))
+
+    # Inputs can either be text or tuple based. On UNIX we ensure conversion
+    # to text if shell is True, and to tuple if shell is False. On windows,
+    # the input is text if shell is True, but can be either if shell is
+    # False as noted in [SO_33560364]_.
+    if as_text:
+        # When shell=True, args is sent to the shell (e.g. bin/sh) as text
+        args = command_text
+    else:
+        # When shell=False, args is a list of executable and arguments
+        if command_tup is None:
+            if sys.platform.startswith('win32'):  # nocover
+                # On windows when shell=False, args can be a str | List[str]
+                # as noted in [SO_33560364]
+                args = command_text
+            else:
+                # On linux when shell=False, args must be a List[str]
+                import shlex
+                args = shlex.split(command_text)
+        else:
+            args = command_tup
+    return args

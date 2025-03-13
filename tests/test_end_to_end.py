@@ -9,7 +9,6 @@ def main():
     official docker variant.
     """
     from jellyfin_migrator.demo.jellyfin_apt_variant import JellyfinAptContainer
-    from jellyfin_migrator.demo.jellyfin_docker_variant import ensure_docker_variant
     import jellyfin_migrator
     import ubelt as ub
 
@@ -23,13 +22,8 @@ def main():
         {'source': repo_dpath, 'target': '/Jellyfin-Migrator'}
     ])
     apt_variant.reset()
-
-    # TODO: add an option to reset the destination variant, as we will want to
-    # test it in a clean slate.
-    docker_variant = ensure_docker_variant()
-    print(f'docker_variant.name={docker_variant.name}')
-    print(f'apt_variant.name={apt_variant.name}')
-    _ = ub.cmd('docker ps', verbose=3)
+    apt_variant.ensure()
+    apt_variant.connect()
 
     # Look at the important spots in the apt-variant
     apt_variant.call(['ls', '-al', '/'])
@@ -130,6 +124,16 @@ print(table[0:2])
         ls ./var/cache/jellyfin
         ls ./jellyfin
     """
+
+
+def test_port_works():
+    # TODO: when the apt port is finally done, test that it ports over to the
+    # docker variant.
+    from jellyfin_migrator.demo.jellyfin_docker_variant import ensure_docker_variant
+    docker_variant = ensure_docker_variant()
+    print(f'docker_variant.name={docker_variant.name}')
+    # print(f'apt_variant.name={apt_variant.name}')
+    # _ = ub.cmd('docker ps', verbose=3)
 
 
 if __name__ == '__main__':
