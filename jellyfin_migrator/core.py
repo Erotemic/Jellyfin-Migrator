@@ -24,6 +24,7 @@ from pathlib import Path
 from shutil import copy
 from time import time
 from functools import partial
+import rich
 
 from jellyfin_migrator.utils import get_dotnet_MD5
 from jellyfin_migrator.utils import jf_date_str_to_python_ns
@@ -96,7 +97,7 @@ def update_db_table(
     rows_count, modified, ignored = 0, 0, 0
 
     # Initialize sqlite3 objects
-    print(f'Connect to: file={file}')
+    rich.print(f'[green]Connect to: file={file}')
     con = sqlite3.connect(file)
     cur = con.cursor()
 
@@ -284,10 +285,6 @@ def update_xml(file: Path, replace_dict: dict, replace_func) -> None:
     tree.write(file)  # , encoding="utf-8")
 
 
-# Remember if the user wants to ignore all future warnings.
-USER_WANTS_INPLACE_WARNING = True
-
-
 def get_target(
         source: Path,
         target: Path,
@@ -297,9 +294,6 @@ def get_target(
         replacements: dict,
         no_log: bool = False,
 ) -> Path:
-    # Not the cleanest solution for remembering it between function calls but good enough here.
-    global USER_WANTS_INPLACE_WARNING
-
     source = Path(source)
     target = Path(target)
 
@@ -334,35 +328,21 @@ def get_target(
     #        a copy and directly pointed this script towards that copy.
     #     2. The user forgot that they shouldn't touch the original files.
     #     3. Something's wrong with the path replacement dict.
-    # In any cases, the user is notified and can decide whether he wants to continue this time,
-    # all the remaining times, too, or abort.
-    #
-    # Program: Are you sure? User: I don't know [yet]
-    usure = "idk"
+    # We are just going to error.
     if source == target:
-        # TODO: probably just error here.
-        if USER_WANTS_INPLACE_WARNING:
-            while usure not in "yna":
-                usure = input("Warning! Working on original file! Continue? [Y]es, [N]o, [A]lways ")
-                # j is for the german "ja" which means yes.
-                usure = usure[0].lower().replace("j", "y")
-            if usure == "n":
-                print_log("Skipping this file. If you want to abort the whole process, stop the script"
-                          "with CTRL + C.")
-                target = None
-            elif usure == "a":
-                # Don't warn about this anymore.
-                USER_WANTS_INPLACE_WARNING = False
+        raise Exception("Target directory needs to be different than source")
     elif not skip_copy:
-        if not target.parent.exists():
-            target.parent.mkdir(parents=True)
-        if not no_log:
-            print_log(f"Copy... {source} -> {target}", end=" ")
+        # DELAY COPY
+        ...
+        # if not target.parent.exists():
+        #     target.parent.mkdir(parents=True)
+        # if not no_log:
+        #     print_log(f"Copy... {source} -> {target}", end=" ")
 
-        copy(source, target)
-        if not no_log:
-            print_log("Done.")
-    return target
+        # copy(source, target)
+        # if not no_log:
+        #     print_log("Done.")
+    return target, skip_copy
 
 
 def process_file(
@@ -379,7 +359,6 @@ def process_file(
 
     if not target:
         raise Exception('What do you want me to do with no input?')
-        return
 
     # Files only.
     if target.is_dir():
@@ -398,8 +377,7 @@ def process_file(
             global LIBRARY_DB_SOURCE_PATH, LIBRARY_DB_TARGET_PATH
             LIBRARY_DB_SOURCE_PATH = source
             LIBRARY_DB_TARGET_PATH = target
-            print(f'CHANGE GLOBAL: {LIBRARY_DB_SOURCE_PATH=}')
-            print(f'CHANGE GLOBAL: {LIBRARY_DB_TARGET_PATH=}')
+            rich.print(f'[yellow]!!!CHANGE GLOBAL: {LIBRARY_DB_SOURCE_PATH=}, {LIBRARY_DB_TARGET_PATH=}')
         # sqlite file. In this case table specifies which tables within that file have columns to check.
         # Iterate over those.
         for table, kwargs in tables.items():
@@ -448,7 +426,7 @@ def process_file(
             source.replace(target)
 
 
-def process_files(lst: list, process_func, replace_func, path_replacements, use_extra_kwargs):
+def collect_files_to_process(lst: list, process_func, replace_func, path_replacements, use_extra_kwargs):
     """
     Processes the todo_list.
     It handles potential wildcards in the file paths and keeps track
@@ -463,15 +441,16 @@ def process_files(lst: list, process_func, replace_func, path_replacements, use_
     process_func: function to apply to jobs of lst.
     replace_func: function used by process_func to do the replacing of paths, ...
     """
-    print('Calling process_files')
+    print('Calling collect_files_to_process')
     done = set()
+    staged_tasks = []
     for job_idx, job in enumerate(lst):
         if "no_log" not in job:
             job["no_log"] = False
         source = job["source"]
         source_root = job['source_root']
 
-        print_log(f"Current job from todo_list: {source}")
+        print_log(f"Staging job from todo_list: {source}")
         expanded_jobs = []
         if "*" in str(source):
             # Path has wildcards, process all matching files.
@@ -505,7 +484,7 @@ def process_files(lst: list, process_func, replace_func, path_replacements, use_
                 continue
             done.add(source)
 
-            target = get_target(
+            target, skip_copy = get_target(
                 source=source,
                 target=job["target"],
                 source_root=job['source_root'],
@@ -525,13 +504,21 @@ def process_files(lst: list, process_func, replace_func, path_replacements, use_
 
             # process_func can either be
             # update_db_table_ids or process_file
-            process_func(
-                source=source,
-                target=target,
-                tables=tables,
-                **process_kwargs,
-            )
-        print_log("")
+            # process_func(
+            #     source=source,
+            #     target=target,
+            #     tables=tables,
+            #     **process_kwargs,
+            # )
+            staged_tasks.append({
+                'source': source,
+                'target': target,
+                'tables': tables,
+                'skip_copy': skip_copy,
+                'process_kwargs': process_kwargs,
+                'process_func': process_func,
+            })
+    return staged_tasks
 
 
 def update_db_table_ids(
@@ -748,20 +735,50 @@ def update_file_dates():
     print_log("Done.")
 
 
+def execute_tasks(staged_tasks):
+    import pandas as pd
+    import rich
+    rich.print('[blue]Executing')
+    df = pd.DataFrame(t for t in staged_tasks)
+    rich.print(df)
+    for task in staged_tasks:
+        task = task.copy()
+        process_func = task.pop('process_func')
+        process_kwargs = task.pop('process_kwargs')
+        source = task.pop('source')
+        target = task.pop('target')
+        tables = task.pop('tables')
+        skip_copy = task.pop('skip_copy')
+        no_log = False
+        if not skip_copy:
+            if not target.parent.exists():
+                target.parent.mkdir(parents=True)
+            if not no_log:
+                print_log(f"Copy... {source} -> {target}", end=" ")
+            copy(source, target)
+            if not no_log:
+                print_log("Done.")
+
+        process_func(source=source, target=target, tables=tables,
+                     **process_kwargs)
+
+
 def main():
+    import ubelt as ub
     print_log("")
     print_log("Starting Jellyfin Database Migration")
 
     ### Copy relevant files and adjust all paths to the new locations.
     print_log("STEP 1. Copy relevant files and adjust all paths to the new locations.")
 
-    process_files(
+    staged_tasks = collect_files_to_process(
         TODO_LIST_PATHS,
         process_func=process_file,
         replace_func=nested_root_path_replacer,
         path_replacements=PATH_REPLACEMENTS,
         use_extra_kwargs=True,
     )
+    execute_tasks(staged_tasks)
 
     ### Update IDs
     print_log("STEP2. Update IDs.")
@@ -777,6 +794,7 @@ def main():
         **IDS["str-dash"],
         "target_path_slash": PATH_REPLACEMENTS["target_path_slash"]
     }
+    print(f'id_replacements_path = {ub.urepr(id_replacements_path, nl=1)}')
 
     # To (mostly) reuse the same functions from step 1, the replacements dict needs to be updated with
     # id_replacements_path. It can't be replaced since it's also used to find the files (which uses the
@@ -792,26 +810,28 @@ def main():
 
     # Replace all paths with ids - both in the file system and within files.
     print_log("STEP 3.1 Replace all paths with ids.")
-    process_files(
+    staged_tasks = collect_files_to_process(
         TODO_LIST_ID_PATHS,
         process_func=process_file,
         replace_func=nested_id_path_replacer,
         path_replacements={**PATH_REPLACEMENTS, **id_replacements_path},
         use_extra_kwargs=True,
     )
+    execute_tasks(staged_tasks)
 
     # Clean up empty folders that may be left behind in the target directory
     #delete_empty_folders(todo, there might be multiple target roots)
 
     # Replace remaining ids.
     print_log("STEP 3.2 Replace remaining ids.")
-    process_files(
+    staged_tasks = collect_files_to_process(
         TODO_LIST_IDS,
         process_func=partial(update_db_table_ids, IDS=IDS),
         replace_func=None,
         path_replacements=PATH_REPLACEMENTS,
         use_extra_kwargs=False,
     )
+    execute_tasks(staged_tasks)
 
     # Finally, update the file dates in the db.
     print_log("STEP 4. Update the file dates.")
