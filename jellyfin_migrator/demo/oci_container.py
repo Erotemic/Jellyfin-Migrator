@@ -273,6 +273,13 @@ class OCIContainer:
             verbose=3
         )
 
+    def commit(self, image_name):
+        """
+        Save the state of this container to an image.
+        """
+        ret = ub.cmd(f'{self.engine.name} commit {self.name} {image_name}')
+        ret.check_returncode()
+
     def connect(self):
         print('Make process to comunicate with container')
         # TODO: would be nice to get stderr out of this too.
@@ -404,7 +411,7 @@ class OCIContainer:
 
         return [PurePosixPath(p) for p in path_strings]
 
-    def exec(self, command, cwd):
+    def exec(self, command, cwd=None, verbose=0):
         """
         Variant of call that uses a separte process to execute a command.
 
@@ -412,7 +419,10 @@ class OCIContainer:
         stderr reporting, and we can capture with ubelt, the downside is
         that it requires a new popen process.
         """
-        return ub.cmd(f'{self.engine.name} exec --workdir {cwd} {self.name} {command}', verbose=3)
+        if cwd is None:
+            return ub.cmd(f'{self.engine.name} exec {self.name} {command}', verbose=verbose)
+        else:
+            return ub.cmd(f'{self.engine.name} exec --workdir {cwd} {self.name} {command}', verbose=verbose)
 
     def call(
         self,

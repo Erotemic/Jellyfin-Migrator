@@ -1,7 +1,7 @@
 from jellyfin_apiclient_python import JellyfinClient
 
 
-def is_server_alive(port):
+def is_server_alive(port, verbose=1):
     r"""
     Check if the local jellyfin server is alive on a port
 
@@ -23,14 +23,37 @@ def is_server_alive(port):
         # json={"Name": "jellyfin", "Password": "jellyfin"})
     except Exception as ex:
         ex
-        ...
-        print(f'ex={ex}')
-        print('waiting')
+        if verbose:
+            print(f'ex={ex}')
+            print('waiting')
     else:
-        print(f'resp={resp}')
+        if verbose:
+            print(f'resp={resp}')
         if resp.ok:
             return True
     return False
+
+
+def is_server_alive2(port):
+    client = JellyfinClient()
+    url = 'http://localhost'
+    client.config.app(
+        name='AliveChecker',
+        version='0.1.0',
+        device_name='machine_name',
+        device_id='unique_id')
+    client.config.data["auth.ssl"] = True
+    url = f'{url}:{port}'
+    username = 'jellyfin'
+    password = 'jellyfin'
+    try:
+        client.auth.connect_to_address(url)
+        client.auth.login(url, username, password)
+        client.jellyfin.users()
+    except Exception:
+        return False
+    else:
+        return True
 
 
 def configure_initial_server(port):

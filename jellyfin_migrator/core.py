@@ -453,9 +453,12 @@ def process_file(
     elif target.suffix == ".db":
         # If it's "library.db", save it for later (see comment at declaration):
         if target.name == "library.db":
+            # TODO: WE REALLY NEED TO GET RID OF GLOBALS!
             global LIBRARY_DB_SOURCE_PATH, LIBRARY_DB_TARGET_PATH
             LIBRARY_DB_SOURCE_PATH = source
             LIBRARY_DB_TARGET_PATH = target
+            print(f'CHANGE GLOBAL: {LIBRARY_DB_SOURCE_PATH=}')
+            print(f'CHANGE GLOBAL: {LIBRARY_DB_TARGET_PATH=}')
         # sqlite file. In this case table specifies which tables within that file have columns to check.
         # Iterate over those.
         for table, kwargs in tables.items():
@@ -564,9 +567,11 @@ def process_files(lst: list, process_func, replace_func, path_replacements, use_
                 replacements=path_replacements,
                 no_log=job["no_log"],
             )
+            tables = job.get('tables', None)
             if use_extra_kwargs:
                 process_kwargs = {k: v for k, v in job.items() if k not in (
-                    "source", "target", "source_root", "original_root", "target_root")}
+                    "source", "target", "source_root", "original_root", "target_root", "tables")}
+                process_kwargs['replace_func'] = replace_func
             else:
                 # hack to remove worse global code, need to cleanup
                 process_kwargs = {}
@@ -574,9 +579,9 @@ def process_files(lst: list, process_func, replace_func, path_replacements, use_
             # process_func can either be
             # update_db_table_ids or process_file
             process_func(
-                replace_func=replace_func,
                 source=source,
                 target=target,
+                tables=tables,
                 **process_kwargs,
             )
         print_log("")
@@ -809,8 +814,6 @@ def main():
         use_extra_kwargs=True,
     )
 
-    raise Exception('Early Stop')
-
     ### Update IDs
     print_log("STEP2. Update IDs.")
     # Generate IDs based on those new paths and save them in the global variable
@@ -835,7 +838,8 @@ def main():
     for i, job in enumerate(TODO_LIST_ID_PATHS):
         TODO_LIST_ID_PATHS[i]["replacements"] = id_replacements_path
 
-    exit()
+    # import ubelt as ub
+    # print(f'IDS = {ub.urepr(IDS, nl=1)}')
 
     # Replace all paths with ids - both in the file system and within files.
     print_log("STEP 3.1 Replace all paths with ids.")

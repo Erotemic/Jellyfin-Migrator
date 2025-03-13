@@ -3,7 +3,7 @@ from jellyfin_migrator.demo.oci_container import OCIContainer, OCIContainerEngin
 from jellyfin_migrator.demo.demo_media import grab_demo_media
 from jellyfin_migrator.demo.jellyfin_init import configure_initial_server
 from jellyfin_migrator.demo.jellyfin_init import add_demo_media_libraries
-from jellyfin_migrator.demo.jellyfin_init import is_server_alive
+from jellyfin_migrator.demo.jellyfin_init import is_server_alive, is_server_alive2
 
 
 class JellyfinAptContainer(OCIContainer):
@@ -11,7 +11,7 @@ class JellyfinAptContainer(OCIContainer):
     Defines an Ubuntu 22.04 image that can setup a jellyfin server.
     """
 
-    def __init__(self, port=8098, oci_engine='docker', mounts=None):
+    def __init__(self, port=8098, oci_engine='docker', mounts=None, use_image_cache=True):
         self.port = port
 
         # Always mount the demo media path
@@ -31,6 +31,22 @@ class JellyfinAptContainer(OCIContainer):
             target = mount['target']
             mount_args.append(f'type=bind,source={source},target={target}')
 
+        # Logic so we can save a server in a fresh state as a standalone image
+        # which lets us iterate faster. This is kinda hacky, and could be
+        # cleaned up. We should put the setup file into a standalone docker
+        # file and just build it. But this requires some special handling
+        # so we can auto-initialize the server credentials.
+        self.base_image = 'ubuntu:22.04'
+        container_name = 'jellyfin_demo_apt_variant'
+        self.cached_image = 'jellyfin_demo_apt_image'
+        self.use_image_cache = use_image_cache
+
+        if use_image_cache and self.image_exists(self.cached_image):
+            # Use a presetup image.
+            image = self.cached_image
+        else:
+            image = self.base_image
+
         engine = OCIContainerEngineConfig(
             oci_engine,
             disable_host_mount=True,
@@ -41,10 +57,16 @@ class JellyfinAptContainer(OCIContainer):
             )
         )
         super().__init__(
-            image='ubuntu:22.04',
-            name='jellyfin_demo_apt_variant',
+            image=image,
+            name=container_name,
             engine=engine
         )
+
+    @classmethod
+    def image_exists(self, image_name):
+        info = ub.cmd('docker images --format "{{.Repository}}:{{.Tag}}"')
+        existing_image_names = info['out'].split('\n')
+        return image_name in existing_image_names or (image_name + ':latest') in existing_image_names
 
     def ensure(self):
         """
@@ -71,31 +93,44 @@ class JellyfinAptContainer(OCIContainer):
             self._run_server()
         else:
             print('server is alive')
+        return self
 
     def reset(self):
         self.remove(force=True, volumes=True)
         self.create()
         self.start()
-        self.setup_server()
+        if self.image == self.base_image:
+            self.setup_server()
+        return self
 
     def is_alive(self):
         # FIXME: this doesn't work all the time for some reason
-        return is_server_alive(self.port)
+        return is_server_alive(self.port, verbose=0)
+
+    def is_alive_fallback(self):
+        running_procs = self.exec('ps -ax').stdout
+        if '/usr/bin/jellyfin' in running_procs:
+            return is_server_alive2(self.port)
 
     def _run_server(self):
         import time
         ub.cmd(f'docker exec --detach {self.name} /usr/bin/jellyfin --webdir=/usr/share/jellyfin/web --ffmpeg=/usr/lib/jellyfin-ffmpeg/ffmpeg')
+        wait_time = 0
         # Block until server is online
         while not self.is_alive():
             print('waiting')
             time.sleep(0.1)
+            wait_time += 1
+            if wait_time > 10:
+                if self.is_alive_fallback():
+                    break
 
     def setup_server(self):
         """
         Only run on an uninitialized server
         """
         # Write the script into the container an call it to setup the server.
-        text = ub.codeblock(
+        setupscript_text = ub.codeblock(
             '''
             #!/usr/bin/env bash
             export DEBIAN_FRONTEND=noninteractive
@@ -131,7 +166,7 @@ class JellyfinAptContainer(OCIContainer):
         # https://stackoverflow.com/questions/46800594/start-service-using-systemctl-inside-docker-container
 
         fpath = ub.Path.appdir('jellyfin/demo').ensuredir() / 'setup_apt_server.sh'
-        fpath.write_text(text)
+        fpath.write_text(setupscript_text)
         self.copy_into(fpath, ub.Path(fpath.name))
         self.call(['bash', 'setup_apt_server.sh'])
         # import time
@@ -148,10 +183,26 @@ class JellyfinAptContainer(OCIContainer):
         print('Adding media libraries')
         add_demo_media_libraries(self.port, media_dpath=self.internal_media_dpath)
 
+        if self.cached_image:
+            self.commit()
+
+    def save_cache(self):
+        assert self.image == self.base_image
+        self.commit(self.cached_image)
+
+
+def main():
+    """
+    Standalone entry point that ensures the server is setup and running.
+    """
+    self = JellyfinAptContainer()
+    self.reset()
+    self.ensure()
+
 
 if __name__ == '__main__':
     """
     CommandLine:
         python ~/code/Jellyfin-Migrator/jellyfin_migrator/demo/jellyfin_apt_variant.py
     """
-    JellyfinAptContainer().ensure()
+    main()

@@ -130,3 +130,11 @@ print(table[0:2])
         ls ./var/cache/jellyfin
         ls ./jellyfin
     """
+
+
+if __name__ == '__main__':
+    """
+    CommandLine:
+        python ~/code/Jellyfin-Migrator/tests/test_end_to_end.py
+    """
+    main()
