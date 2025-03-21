@@ -24,7 +24,6 @@ from pathlib import Path
 from shutil import copy
 from time import time
 from functools import partial
-import rich
 
 from jellyfin_migrator.utils import get_dotnet_MD5
 from jellyfin_migrator.utils import jf_date_str_to_python_ns
@@ -41,6 +40,14 @@ from jellyfin_migrator.id_scanner import (
 # import jellyfin_migrator.windows_config as config
 import jellyfin_migrator.linux_config as config
 
+
+try:
+    # For DEV, but should make these optional
+    import rich
+    import ubelt as ub
+except ImportError:
+    raise
+
 LOG_FILE = config.LOG_FILE
 PATH_REPLACEMENTS = config.PATH_REPLACEMENTS
 FS_PATH_REPLACEMENTS = config.FS_PATH_REPLACEMENTS
@@ -53,7 +60,7 @@ TODO_LIST_IDS = config.TODO_LIST_IDS
 
 # Since library.db will be needed throughout the process, its location is stored
 # here once it's been moved and updated with the new paths.
-LIBRARY_DB_TARGET_PATH = Path()
+LIBRARY_DB_STAGING_PATH = Path()
 LIBRARY_DB_SOURCE_PATH = Path()
 
 
@@ -91,13 +98,18 @@ def update_db_table(
         path_columns=(),
         json_columns=(),
         jf_image_columns=(),
-        preview=False
 ):
+
+    """
+    repair(){
+        cat <( sqlite3 "$1" .dump | grep "^ROLLBACK" -v ) <( echo "COMMIT;" ) | sqlite3 "fix_$1"
+    }
+    """
     # Initialize local variables
     rows_count, modified, ignored = 0, 0, 0
 
     # Initialize sqlite3 objects
-    rich.print(f'[green]Connect to: file={file}')
+    rich.print(f'[green]update_db_table, Connect to: file={file}')
     con = sqlite3.connect(file)
     cur = con.cursor()
 
@@ -117,6 +129,7 @@ def update_db_table(
     # For the sql query the desired row names should be enclosed in ` ` and comma separated.
     # It's important to note that the json columns come first, followed by the path columns
     columns = ", ".join([f"`{e}`" for e in list(json_columns) + list(path_columns)] + list(jf_image_columns))
+    # print(f'columns = {ub.urepr(columns, nl=1)}')
 
     # Query the unique IDs of all rows. Note: we cannot iterate over the rows using
     #     for row in cur.execute(get rows)
@@ -168,6 +181,8 @@ def update_db_table(
                 # from json.loads. Just skip them
                 data = json.loads(data)
                 data, mo, ig, wrns = replace_func(data, replace_dict)
+                if wrns:
+                    rich.print('[yellow]WARNING1')
                 for warning in wrns:
                     print_log(warning)
                 modified += mo
@@ -177,6 +192,8 @@ def update_db_table(
             # One could also skip the empty objects here, but recursive_path_replacer handles them
             # just fine (leaves them untouched).
             path, mo, ig, wrns = replace_func(path, replace_dict)
+            if wrns:
+                rich.print('[yellow]WARNING2')
             for warning in wrns:
                 print_log(warning)
             modified += mo
@@ -201,6 +218,8 @@ def update_db_table(
                 img_properties = img_properties.split("*")
                 # path = first property
                 img_properties[0], mo, ig, wnrs = replace_func(img_properties[0], replace_dict)
+                if wrns:
+                    rich.print('[yellow]WARNING3')
                 for warning in wrns:
                     print_log(warning)
                 imgs[j] = "*".join(img_properties)
@@ -249,14 +268,11 @@ def update_db_table(
                 print_log("Args: ", args)
                 raise
                 exit()
-    print_log(f"Processed {rows_count} rows in table {table}. ")
-    print_log(f"{modified} paths have been modified.")
+    print_log(f"update_db_table, Processed {rows_count} rows in table {table}. ")
+    print_log(f"update_db_table, {modified} paths have been modified.")
 
-    # Once again, this came from the development and is not required anymore, especially
-    # since by default the script is working on copies of the original files.
-    if not preview:
-        # Write the updated database back to the file.
-        con.commit()
+    # Write the updated database back to the file.
+    con.commit()
     con.close()
 
 
@@ -277,6 +293,8 @@ def update_xml(file: Path, replace_dict: dict, replace_func) -> None:
         if el.tag in ("biography", "outline"):
             continue
         el.text, mo, ig, wrns = replace_func(el.text, replace_dict)
+        if wrns:
+            rich.print('[yellow]WARNING(update_xml)')
         for warning in wrns:
             print_log(warning)
         modified += mo
@@ -285,15 +303,19 @@ def update_xml(file: Path, replace_dict: dict, replace_func) -> None:
     tree.write(file)  # , encoding="utf-8")
 
 
-def get_target(
+def resolve_target(
         source: Path,
         target: Path,
-        source_root,
         original_root,
+        source_root,
+        staging_root,
         target_root,
         replacements: dict,
         no_log: bool = False,
 ) -> Path:
+    """
+    Resolve the source path to the appropriate target path.
+    """
     source = Path(source)
     target = Path(target)
 
@@ -306,22 +328,41 @@ def get_target(
     if len(target.parts) == 1 and target.name.startswith("auto"):
         if target.name == "auto-existing":
             skip_copy = True
-        original_source = original_root / source.relative_to(source_root)
-        # print(f'original_source={original_source}')
-        target, idgaf1, idgaf2, wrns1 = nested_root_path_replacer(original_source, to_replace=replacements)
-        target, idgaf1, idgaf2, wrns2 = nested_root_path_replacer(target, to_replace=FS_PATH_REPLACEMENTS)
-        for warning in wrns1 + wrns2:
-            print_log(warning)
-        target = Path(target)
+
+        relpath = source.relative_to(source_root)
+        original_source = original_root / relpath
+        original = original_source
+        staging = staging_root / relpath
+        # target_v1, idgaf1, idgaf2, wrns1 = nested_root_path_replacer(original_source, to_replace=replacements)
+        # target_v2, idgaf1, idgaf2, wrns2 = nested_root_path_replacer(target_v1, to_replace=FS_PATH_REPLACEMENTS)
+        # for warning in wrns1 + wrns2:
+        # for warning in wrns1:
+        #     print_log(warning)
+        # target_v2 = Path(target_v1)
+        # target_v2 = Path(target_v2)
+        # target = target_v2
         # print(f'!!!target={target}')
-        if not target.is_absolute():
-            if target.is_relative_to("/"):
-                # Otherwise the line below will make target relative to the _root_ of target_root
-                # instead of relative to target_root.
-                target = target.relative_to("/")
-            target = target_root / target
-        # print(f'target={target}')
-        # print(f'!>>target={target}')
+        # if not target.is_absolute():
+        # if target.is_relative_to("/"):
+        # assert target.is_relative_to("/")
+        # # Otherwise the line below will make target relative to the _root_ of target_root
+        # # instead of relative to target_root.
+        # target = target.relative_to("/")
+        target = target_root / relpath
+
+        if 0:
+            print('Resolving Target')
+            # Maybe add an explicit "original source" which is equal to source if
+            # running on an existing instance, but if you take the drive out and
+            # need to run the migration, then there is a path the original jellyfin
+            # referenecs, and there is the one that needs to be copied and then
+            # modified.
+            print(f'original = {original}')
+            print(f'source   = {source}')
+            print(f'staging  = {staging}')
+            print(f'target   = {target}')
+    else:
+        raise AssertionError('not handled')
 
     # If source and target are the same there are two possibilities:
     #     1. The user actually wants to work on the given source files; maybe he already created
@@ -342,88 +383,7 @@ def get_target(
         # copy(source, target)
         # if not no_log:
         #     print_log("Done.")
-    return target, skip_copy
-
-
-def process_file(
-        source: Path,
-        target: Path,
-        replacements: dict,
-        replace_func,
-        tables: dict = None,
-        copy_only: bool = False,
-        no_log: bool = False,
-) -> None:
-    if tables is None:
-        tables = dict()
-
-    if not target:
-        raise Exception('What do you want me to do with no input?')
-
-    # Files only.
-    if target.is_dir():
-        return
-
-    if not no_log:
-        print_log("Processing", target)
-
-    if copy_only:
-        # No need to do any further checks.
-        return
-    elif target.suffix == ".db":
-        # If it's "library.db", save it for later (see comment at declaration):
-        if target.name == "library.db":
-            # TODO: WE REALLY NEED TO GET RID OF GLOBALS!
-            global LIBRARY_DB_SOURCE_PATH, LIBRARY_DB_TARGET_PATH
-            LIBRARY_DB_SOURCE_PATH = source
-            LIBRARY_DB_TARGET_PATH = target
-            rich.print(f'[yellow]!!!CHANGE GLOBAL: {LIBRARY_DB_SOURCE_PATH=}, {LIBRARY_DB_TARGET_PATH=}')
-        # sqlite file. In this case table specifies which tables within that file have columns to check.
-        # Iterate over those.
-        for table, kwargs in tables.items():
-            print_log("Processing table", table)
-            # The remaining function arguments (**kwards) contain the details about the columns to process.
-            # See update_db_table and/or the todo_list.
-            update_db_table(file=target, replace_dict=replacements, replace_func=replace_func, table=table, **kwargs)
-    elif target.suffix == ".xml" or target.suffix == ".nfo":
-        update_xml(file=target, replace_dict=replacements, replace_func=replace_func)
-    elif target.suffix == ".mblink":
-        # .mblink files only contain a path, nothing else.
-        with open(target, "r", encoding="utf-8") as f:
-            path = f.read()
-        path, modified, ignored, wrns = replace_func(path, replacements)
-        for warning in wrns:
-            print_log(warning)
-        print_log(f"Processed {modified + ignored} paths, {modified} paths have been modified.")
-        with open(target, "w", encoding="utf-8") as f:
-            f.write(path)
-    elif target.suffix == ".json":
-        # There are also json files with the ending .js but I haven't found any with paths.
-        # Load the file by the json module (resulting in a dict or list object) and process
-        # them by recursive_path_replacer which handles these structures.
-        with open(target, "r", encoding="utf-8") as f:
-            j = json.load(f)
-        j, modified, ignored, wrns = replace_func(j, replacements)
-        for warning in wrns:
-            print_log(warning)
-        print_log(f"Processed {modified + ignored} paths, {modified} paths have been modified.")
-        with open(target, "w", encoding="utf-8") as f:
-            # indent 2 seems to be the default formatting for jellyfin json files.
-            json.dump(j, f, indent=2)
-
-    # If we're updating path ids we also need to check the paths of the files themselves
-    # and move them if they're relative to a path.
-    # This obviously leaves empty folders behind, which are cleaned up afterwards.
-    if replace_func == nested_id_path_replacer:
-        source = target
-        target, modified, ignored, wrns = nested_id_path_replacer(source, replacements)
-        for warning in wrns:
-            print_log(warning)
-        if modified:
-            print_log("Changing ID in filepath: ->", target)
-            target = Path(target)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            source.replace(target)
+    return original, source, staging, target, skip_copy
 
 
 def collect_files_to_process(lst: list, process_func, replace_func, path_replacements, use_extra_kwargs):
@@ -440,6 +400,9 @@ def collect_files_to_process(lst: list, process_func, replace_func, path_replace
     lst: job list
     process_func: function to apply to jobs of lst.
     replace_func: function used by process_func to do the replacing of paths, ...
+
+    NEW:
+        Just returns the tasks that need to be executed. Won't execute them yet.
     """
     print('Calling collect_files_to_process')
     done = set()
@@ -450,7 +413,6 @@ def collect_files_to_process(lst: list, process_func, replace_func, path_replace
         source = job["source"]
         source_root = job['source_root']
 
-        print_log(f"Staging job from todo_list: {source}")
         expanded_jobs = []
         if "*" in str(source):
             # Path has wildcards, process all matching files.
@@ -459,17 +421,21 @@ def collect_files_to_process(lst: list, process_func, replace_func, path_replace
             # to convert them to a string...
             # It is expected that all these paths are relative to source_root.
             rel_source = source.relative_to(source_root)
+            new_jobs = []
             for src in source_root.glob(str(rel_source)):
                 if src.is_dir():
                     continue
 
-                expanded_jobs.append({
+                new_jobs.append({
                     'source': src,
                     'target': job['target'],
                 })
+            print_log(f"Staging job from todo_list: {source} -> Expanding to {len(new_jobs)} rows")
+            expanded_jobs.extend(new_jobs)
         else:
             # No wildcards, just add the single file to the queue
             # Just a single file
+            print_log(f"Staging job from todo_list: {source}")
             expanded_jobs.append({
                 'source': source,
                 'target': job['target'],
@@ -484,11 +450,12 @@ def collect_files_to_process(lst: list, process_func, replace_func, path_replace
                 continue
             done.add(source)
 
-            target, skip_copy = get_target(
+            original, source, staging, target, skip_copy = resolve_target(
                 source=source,
                 target=job["target"],
-                source_root=job['source_root'],
                 original_root=job['original_root'],
+                source_root=job['source_root'],
+                staging_root=job['staging_root'],
                 target_root=job['target_root'],
                 replacements=path_replacements,
                 no_log=job["no_log"],
@@ -496,7 +463,7 @@ def collect_files_to_process(lst: list, process_func, replace_func, path_replace
             tables = job.get('tables', None)
             if use_extra_kwargs:
                 process_kwargs = {k: v for k, v in job.items() if k not in (
-                    "source", "target", "source_root", "original_root", "target_root", "tables")}
+                    "source", "target", "source_root", "original_root", "target_root", "staging_root", "tables")}
                 process_kwargs['replace_func'] = replace_func
             else:
                 # hack to remove worse global code, need to cleanup
@@ -504,14 +471,10 @@ def collect_files_to_process(lst: list, process_func, replace_func, path_replace
 
             # process_func can either be
             # update_db_table_ids or process_file
-            # process_func(
-            #     source=source,
-            #     target=target,
-            #     tables=tables,
-            #     **process_kwargs,
-            # )
             staged_tasks.append({
+                'original': original,
                 'source': source,
+                'staging': staging,
                 'target': target,
                 'tables': tables,
                 'skip_copy': skip_copy,
@@ -521,11 +484,102 @@ def collect_files_to_process(lst: list, process_func, replace_func, path_replace
     return staged_tasks
 
 
+def process_file(
+        original: Path,
+        source: Path,
+        staging: Path,
+        target: Path,
+        replacements: dict,
+        replace_func,
+        tables: dict = None,
+        copy_only: bool = False,
+        no_log: bool = False,
+) -> None:
+    if tables is None:
+        tables = dict()
+
+    if not staging:
+        raise Exception('What do you want me to do with no input?')
+
+    # Files only.
+    if staging.is_dir():
+        return
+
+    if not no_log:
+        print_log("Processing", staging)
+
+    if copy_only:
+        # No need to do any further checks.
+        return
+    elif staging.suffix == ".db":
+        # If it's "library.db", save it for later (see comment at declaration):
+        if staging.name == "library.db":
+            # TODO: WE REALLY NEED TO GET RID OF GLOBALS!
+            global LIBRARY_DB_SOURCE_PATH, LIBRARY_DB_STAGING_PATH
+            LIBRARY_DB_SOURCE_PATH = source
+            LIBRARY_DB_STAGING_PATH = staging
+            rich.print(f'[yellow]!!!CHANGE GLOBAL: {LIBRARY_DB_SOURCE_PATH=}, {LIBRARY_DB_STAGING_PATH=}')
+        # sqlite file. In this case table specifies which tables within that file have columns to check.
+        # Iterate over those.
+        for table, kwargs in tables.items():
+            print_log("Processing table", table)
+            # The remaining function arguments (**kwards) contain the details about the columns to process.
+            # See update_db_table and/or the todo_list.
+            # JON FIXME: the replacements dict probably needs to be wrt to staging, previously wrt to target
+            update_db_table(file=staging, replace_dict=replacements, replace_func=replace_func, table=table, **kwargs)
+    elif staging.suffix == ".xml" or staging.suffix == ".nfo":
+        update_xml(file=staging, replace_dict=replacements, replace_func=replace_func)
+    elif staging.suffix == ".mblink":
+        # .mblink files only contain a path, nothing else.
+        with open(staging, "r", encoding="utf-8") as f:
+            path = f.read()
+        path, modified, ignored, wrns = replace_func(path, replacements)
+        if wrns:
+            rich.print('[yellow]WARNING(process_file.1)')
+        for warning in wrns:
+            print_log(warning)
+        print_log(f"Processed {modified + ignored} paths, {modified} paths have been modified.")
+        with open(staging, "w", encoding="utf-8") as f:
+            f.write(path)
+    elif staging.suffix == ".json":
+        # There are also json files with the ending .js but I haven't found any with paths.
+        # Load the file by the json module (resulting in a dict or list object) and process
+        # them by recursive_path_replacer which handles these structures.
+        with open(staging, "r", encoding="utf-8") as f:
+            j = json.load(f)
+        j, modified, ignored, wrns = replace_func(j, replacements)
+        if wrns:
+            rich.print('[yellow]WARNING(process_file.2)')
+        for warning in wrns:
+            print_log(warning)
+        print_log(f"Processed {modified + ignored} paths, {modified} paths have been modified.")
+        with open(staging, "w", encoding="utf-8") as f:
+            # indent 2 seems to be the default formatting for jellyfin json files.
+            json.dump(j, f, indent=2)
+
+    # If we're updating path ids we also need to check the paths of the files themselves
+    # and move them if they're relative to a path.
+    # This obviously leaves empty folders behind, which are cleaned up afterwards.
+    if replace_func == nested_id_path_replacer:
+        # I dont think this does anything, we can handle this elsewhere
+        source = target
+        target, modified, ignored, wrns = nested_id_path_replacer(source, replacements)
+        if wrns:
+            rich.print('[yellow]WARNING(process_file.3)')
+        for warning in wrns:
+            print_log(warning)
+        if modified:
+            print_log("Changing ID in filepath: ->", target)
+            target = Path(target)
+            target.parent.mkdir(parents=True, exist_ok=True)
+
+
 def update_db_table_ids(
+        original,
         source,
+        staging,
         target,
         tables,
-        preview=False,
         IDS=None,
         # **kwargs
 ):
@@ -540,15 +594,15 @@ def update_db_table_ids(
     MY COMMENT:
         NO! Bad! DO IT BETTER! GFAGFGAJK!@!!!
     """
-    if not os.path.exists(source):
-        print_log("Database source={source} does not exist, skipping")
+    if not os.path.exists(staging):
+        print_log(f"Database staging={staging} does not exist, skipping")
         return
 
     print_log("Updating Item IDs in database... ")
     assert IDS is not None
 
     # Initialize sqlite3 objects
-    con = sqlite3.connect(target)
+    con = sqlite3.connect(staging)
     cur = con.cursor()
 
     updated_ids_count = 0
@@ -562,7 +616,7 @@ def update_db_table_ids(
                 try:
                     rows = [r for r in cur.execute(f"SELECT DISTINCT `{column}` from `{table}`")]
                 except sqlite3.OperationalError:
-                    print_log(f'ERROR: selecting distinct row from table={table} column={column} in {source}')
+                    print_log(f'ERROR: selecting distinct row from table={table} column={column} in {staging}')
                     raise
 
                 progress = 0
@@ -589,20 +643,15 @@ def update_db_table_ids(
                             cur.execute(f"DELETE FROM `{table}` WHERE `{column}` = ?", (old_id,))
                         updated_ids_count += 1
 
-    # Once again, this came from the development and is not required anymore, especially
-    # since by default the script is working on copies of the original files.
-    if not preview:
-        # Write the updated database back to the file.
-        con.commit()
+    # Write the updated database back to the file.
+    con.commit()
     con.close()
     print_log(f"{updated_ids_count} IDs updated.")
 
 
-def get_ids():
-    global LIBRARY_DB_TARGET_PATH
-
-    print(f'Connect to LIBRARY_DB_TARGET_PATH={LIBRARY_DB_TARGET_PATH}')
-    con = sqlite3.connect(LIBRARY_DB_TARGET_PATH)
+def get_ids(LIBRARY_DB_STAGING_PATH):
+    rich.print(f'[green] Connect to LIBRARY_DB_STAGING_PATH={LIBRARY_DB_STAGING_PATH}')
+    con = sqlite3.connect(LIBRARY_DB_STAGING_PATH)
     cur = con.cursor()
 
     id_replacements_bin = dict()
@@ -671,65 +720,52 @@ def get_ids():
     return IDS
 
 
-def update_file_dates():
+def update_file_dates(LIBRARY_DB_STAGING_PATH, seen_tasks):
     print_log("Updating file dates... Note: Reading file dates seems to be quite slow. "
               "This will take a couple minutes")
 
-    con = sqlite3.connect(LIBRARY_DB_TARGET_PATH)
+    con = sqlite3.connect(LIBRARY_DB_STAGING_PATH)
     cur = con.cursor()
 
     rows = [r for r in cur.execute("SELECT `rowid`, `Path`, `DateCreated`, `DateModified` FROM `TypedBaseItems`")]
 
-    progress = 0
-    rowcount = len(rows)
-    t = time()
+    import ubelt as ub
+    import kwutil
+    target_to_staging = {r['target']: r['staging'] for r in ub.flatten(seen_tasks)}
+    pman = kwutil.ProgressManager()
+    with pman:
+        for rowid, target, date_created, date_modified in pman.ProgIter(rows, desc='update dates'):
+            if not target:
+                continue
+            # Determine file path as seen by this script (see FS_PATH_REPLACEMENTS for details)
+            # Code taken from get_target
+            # print(f'FS_PATH_REPLACEMENTS={FS_PATH_REPLACEMENTS}')
+            target, idgaf1, idgaf2, wrns = nested_root_path_replacer(target, to_replace=FS_PATH_REPLACEMENTS)
+            for warning in wrns:
+                print_log(warning)
+            staging = target_to_staging.get(target, target)
+            staging = Path(staging)
 
-    for rowid, target, date_created, date_modified in rows:
-        progress += 1
-        # Print the progress every second. Note: this is the only usage of the "progress" variable.
-        now = time()
-        if now - t > 1:
-            print_log(f"Progress: {progress} / {rowcount} rows")
-            t = now
+            if not staging.exists():
+                rich.print(f"[yellow] File doesn't seem to exist; can't update its dates in the database: {staging!r}")
+                continue
 
-        if not target:
-            continue
-        # Determine file path as seen by this script (see FS_PATH_REPLACEMENTS for details)
-        # Code taken from get_target
-        target, idgaf1, idgaf2, wrns = nested_root_path_replacer(target, to_replace=FS_PATH_REPLACEMENTS)
-        for warning in wrns:
-            print_log(warning)
-        target = Path(target)
-        # print(f'!!!target={target}')
-        if not target.is_absolute():
-            if target.is_relative_to("/"):
-                # Otherwise the line below will make target relative to the _root_ of target_root
-                # instead of relative to target_root.
-                target = target.relative_to("/")
-            target = TARGET_ROOT / target
-        # print(f'!>>target={target}')
-        # End of code taken from get_target
+            date_created_ns  = jf_date_str_to_python_ns(date_created)
+            date_modified_ns = jf_date_str_to_python_ns(date_modified)
 
-        if not target.exists():
-            print_log("File doesn't seem to exist; can't update its dates in the database: ", target)
-            continue
+            if date_created_ns >= 0 and date_modified_ns >= 0:
+                continue
 
-        date_created_ns  = jf_date_str_to_python_ns(date_created)
-        date_modified_ns = jf_date_str_to_python_ns(date_modified)
+            filestats = os.stat(staging)
 
-        if date_created_ns >= 0 and date_modified_ns >= 0:
-            continue
-
-        filestats = os.stat(target)
-
-        if date_created_ns < 0:
-            new_date_created = get_datestr_from_python_time_ns(filestats.st_ctime_ns)
-            cur.execute("UPDATE `TypedBaseItems` SET `DateCreated` = ? WHERE `rowid` = ?",
-                        (new_date_created, rowid))
-        if date_modified_ns < 0:
-            new_date_modified = get_datestr_from_python_time_ns(filestats.st_mtime_ns)
-            cur.execute("UPDATE `TypedBaseItems` SET `DateModified` = ? WHERE `rowid` = ?",
-                        (new_date_modified, rowid))
+            if date_created_ns < 0:
+                new_date_created = get_datestr_from_python_time_ns(filestats.st_ctime_ns)
+                cur.execute("UPDATE `TypedBaseItems` SET `DateCreated` = ? WHERE `rowid` = ?",
+                            (new_date_created, rowid))
+            if date_modified_ns < 0:
+                new_date_modified = get_datestr_from_python_time_ns(filestats.st_mtime_ns)
+                cur.execute("UPDATE `TypedBaseItems` SET `DateModified` = ? WHERE `rowid` = ?",
+                            (new_date_modified, rowid))
 
     con.commit()
     print_log("Done.")
@@ -738,38 +774,55 @@ def update_file_dates():
 def execute_tasks(staged_tasks):
     import pandas as pd
     import rich
-    rich.print('[blue]Executing')
+    rich.print('[blue]Staged Tasks:')
     df = pd.DataFrame(t for t in staged_tasks)
     rich.print(df)
+    rich.print('[blue]Executing Tasks:')
     for task in staged_tasks:
         task = task.copy()
         process_func = task.pop('process_func')
         process_kwargs = task.pop('process_kwargs')
+        original = task.pop('original')
         source = task.pop('source')
+        staging = task.pop('staging')
         target = task.pop('target')
         tables = task.pop('tables')
         skip_copy = task.pop('skip_copy')
         no_log = False
         if not skip_copy:
-            if not target.parent.exists():
-                target.parent.mkdir(parents=True)
+            if not staging.parent.exists():
+                staging.parent.mkdir(parents=True)
             if not no_log:
-                print_log(f"Copy... {source} -> {target}", end=" ")
-            copy(source, target)
+                print_log(f"Copy... {source} -> {staging}", end=" ")
+            copy(source, staging)
             if not no_log:
                 print_log("Done.")
 
-        process_func(source=source, target=target, tables=tables,
+        process_func(source=source, staging=staging, target=target,
+                     original=original, tables=tables,
                      **process_kwargs)
+    rich.print('[blue]Finished Tasks')
 
 
 def main():
-    import ubelt as ub
+    import textwrap
+    from rich.markup import escape
     print_log("")
+    rich.print('[white]' + escape(textwrap.dedent(
+        r"""
+        ===========================================================================
+         _ ____ _    _    _   _ ____ _ _  _    _  _ _ ____ ____ ____ ___ ____ ____
+         | |___ |    |     \_/  |___ | |\ |    |\/| | | __ |__/ |__|  |  |  | |__/
+        _| |___ |___ |___   |   |    | | \|    |  | | |__] |  \ |  |  |  |__| |  \
+
+        ===========================================================================
+        """)))
     print_log("Starting Jellyfin Database Migration")
 
     ### Copy relevant files and adjust all paths to the new locations.
-    print_log("STEP 1. Copy relevant files and adjust all paths to the new locations.")
+    rich.print("[white]STEP 1. Copy relevant files and adjust all paths to the new locations.")
+
+    seen_tasks = []
 
     staged_tasks = collect_files_to_process(
         TODO_LIST_PATHS,
@@ -778,12 +831,13 @@ def main():
         path_replacements=PATH_REPLACEMENTS,
         use_extra_kwargs=True,
     )
+    seen_tasks.append(staged_tasks)
     execute_tasks(staged_tasks)
 
     ### Update IDs
     print_log("STEP2. Update IDs.")
     # Generate IDs based on those new paths and save them in the global variable
-    IDS = get_ids()
+    IDS = get_ids(LIBRARY_DB_STAGING_PATH)
     # ID types occurring in paths (<- search for that to find another comment with more details if you missed it)
     # Include/Exclude types (see get_ids) to specify which are used for looking through paths.
     # Currently, all are included, just to be safe.
@@ -809,7 +863,7 @@ def main():
     # print(f'IDS = {ub.urepr(IDS, nl=1)}')
 
     # Replace all paths with ids - both in the file system and within files.
-    print_log("STEP 3.1 Replace all paths with ids.")
+    rich.print("[white]STEP 3.1 Replace all paths with ids.")
     staged_tasks = collect_files_to_process(
         TODO_LIST_ID_PATHS,
         process_func=process_file,
@@ -817,13 +871,14 @@ def main():
         path_replacements={**PATH_REPLACEMENTS, **id_replacements_path},
         use_extra_kwargs=True,
     )
+    seen_tasks.append(staged_tasks)
     execute_tasks(staged_tasks)
 
     # Clean up empty folders that may be left behind in the target directory
     #delete_empty_folders(todo, there might be multiple target roots)
 
     # Replace remaining ids.
-    print_log("STEP 3.2 Replace remaining ids.")
+    rich.print("[white]STEP 3.2 Replace remaining ids.")
     staged_tasks = collect_files_to_process(
         TODO_LIST_IDS,
         process_func=partial(update_db_table_ids, IDS=IDS),
@@ -831,14 +886,34 @@ def main():
         path_replacements=PATH_REPLACEMENTS,
         use_extra_kwargs=False,
     )
+    seen_tasks.append(staged_tasks)
     execute_tasks(staged_tasks)
 
     # Finally, update the file dates in the db.
-    print_log("STEP 4. Update the file dates.")
-    update_file_dates()
+    rich.print("[white]STEP 4. Update the file dates.")
+    update_file_dates(LIBRARY_DB_STAGING_PATH, seen_tasks)
 
     print_log("")
-    print_log("Jellyfin Database Migration complete.")
+    rich.print("[green]Jellyfin Database Migration complete.")
+
+    d1 = {k: getattr(config.STAGING, k) for k in dir(config.STAGING) if not k.startswith('_')}
+    d2 = {k: getattr(config.TARGET, k) for k in dir(config.STAGING) if not k.startswith('_')}
+
+    for k in d1.keys():
+        v1 = d1[k]
+        v2 = d2[k]
+        path = ub.Path(v1)
+        rsync_src = '/'.join([str(Path(*path.parts[0:-1])), path.parts[-1]])
+        rsync_dst = ub.Path(v2)
+        print(f'test -e {v1} && rsync -avPR {rsync_src} {rsync_dst}')
+    """
+    test -e /staging/staged-cached && rsync -avPR /staging/staged-cached /config/cache
+    test -e /staging/staged-config && rsync -avPR /staging/staged-config /config
+    test -e /staging/staged-data && rsync -avPR /staging/staged-data /config/data
+    test -e /staging/staged-ffmpeg && rsync -avPR /staging/staged-ffmpeg usr/lib/jellyfin-ffmpeg/ffmpeg
+    test -e /staging/staged-log && rsync -avPR /staging/staged-log /config/log
+    test -e /staging/staged-transcodes && rsync -avPR /staging/staged-transcodes /config/data/transcodes
+    """
 
 if __name__ == "__main__":
     main()

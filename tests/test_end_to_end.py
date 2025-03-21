@@ -46,7 +46,24 @@ def main():
     self.connect()
     self.call(['python3', '--version'])
     # Run the migrator (with exec for stderr)
-    _ = self.exec('python3 -m jellyfin_migrator', cwd='/Jellyfin-Migrator')
+    _ = self.exec('apt update', cwd='/Jellyfin-Migrator', verbose=3)
+    _ = self.exec('apt install python3-pip --yes', cwd='/Jellyfin-Migrator', verbose=3)
+    _ = self.exec('pip install pandas ubelt rich kwutil', cwd='/Jellyfin-Migrator', verbose=3)
+
+    _ = self.exec('python3 -m jellyfin_migrator', cwd='/Jellyfin-Migrator', verbose=3)
+    _ = self.exec('ls', cwd='/staging', verbose=3)
+
+    dpath = ub.Path.appdir('jellyfin-migrator').ensuredir()
+    local_staging = (dpath / 'staging')
+    self.copy_out('staging', to_path=local_staging)
+
+    # Now lets try to port
+    from jellyfin_migrator.demo.jellyfin_docker_variant import ensure_docker_variant
+    docker_variant = ensure_docker_variant()
+    print(f'docker_variant.name={docker_variant.name}')
+    docker_variant.copy_into(local_staging, '/staging')
+    docker_variant.exec('ls /', verbose=3)
+    # print(f'apt_variant.name={apt_variant.name}')
 
     # For now, lets do things manually
     """

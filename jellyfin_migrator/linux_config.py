@@ -144,8 +144,8 @@ PATH_REPLACEMENTS = {
 FS_PATH_REPLACEMENTS = {
     "log_no_warnings": False,
     "target_path_slash": "/",
-    '/data/jellyfin/media': '/new_media',
-    "/config": "/",
+    # '/data/jellyfin/media': '/new_media',
+    # "/config": "/",
     "%AppDataPath%": "/data/data",
     "%MetadataPath%": "/data/metadata",
     # "/data/tvshows": "Y:/Serien",
@@ -164,6 +164,8 @@ FS_PATH_REPLACEMENTS = {
 ORIGINAL_ROOT = Path(SourceVariant.data)
 SOURCE_ROOT = Path(SourceVariant.data)
 TARGET_ROOT = Path("/jellyfin-dummy")
+# New:
+STAGING_ROOT = Path("/staging")
 
 
 # These generalize the notions of SOURCE_ROOT, TARGET_ROOT, and ORIGINAL_ROOT
@@ -187,18 +189,21 @@ class SOURCE:
 
 
 class TARGET:
-    # config = Path(DestinationVariant.config)
-    # cache = Path(DestinationVariant.cache)
-    # log = Path(DestinationVariant.log)
-    # data = Path(DestinationVariant.data)
-    # transcodes = Path(DestinationVariant.transcodes)
-    # ffmpeg = Path(DestinationVariant.ffmpeg)
-    config = TARGET_ROOT
-    cache = TARGET_ROOT
-    log = TARGET_ROOT
-    data = TARGET_ROOT
-    transcodes = TARGET_ROOT
-    ffmpeg = TARGET_ROOT
+    config = Path(DestinationVariant.config)
+    cache = Path(DestinationVariant.cache)
+    log = Path(DestinationVariant.log)
+    data = Path(DestinationVariant.data)
+    transcodes = Path(DestinationVariant.transcodes)
+    ffmpeg = Path(DestinationVariant.ffmpeg)
+
+
+class STAGING:
+    config = STAGING_ROOT / 'staged-config'
+    cache = STAGING_ROOT / 'staged-cached'
+    log = STAGING_ROOT / 'staged-log'
+    data = STAGING_ROOT / 'staged-data'
+    transcodes = STAGING_ROOT / 'staged-transcodes'
+    ffmpeg = STAGING_ROOT / 'staged-ffmpeg'
 
 
 ### The To-Do Lists: TODO_LIST_PATHS, TODO_LIST_ID_PATHS and TODO_LIST_IDS.
@@ -234,6 +239,7 @@ TODO_LIST_PATHS = [
         "source_root": SOURCE.data,
         "original_root": ORIGINAL.data,
         "target_root": TARGET.data,
+        "staging_root": STAGING.data,
         "target": "auto",                      # Usually you want to leave this on auto. If you want to work on the source file, set it to the same path (YOU SHOULDN'T!).
         "replacements": PATH_REPLACEMENTS,     # Usually same for all but you could specify a specific one per db.
         "tables": {
@@ -265,6 +271,7 @@ TODO_LIST_PATHS = [
         "source_root": SOURCE.data,
         "original_root": ORIGINAL.data,
         "target_root": TARGET.data,
+        "staging_root": STAGING.data,
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
         "tables": {
@@ -281,6 +288,7 @@ TODO_LIST_PATHS = [
         "source_root": SOURCE.data,
         "original_root": ORIGINAL.data,
         "target_root": TARGET.data,
+        "staging_root": STAGING.data,
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
         "copy_only": True,
@@ -292,6 +300,7 @@ TODO_LIST_PATHS = [
         "source_root": SOURCE.data,
         "original_root": ORIGINAL.data,
         "target_root": TARGET.data,
+        "staging_root": STAGING.data,
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
     },
@@ -301,6 +310,7 @@ TODO_LIST_PATHS = [
         "source_root": SOURCE.config,
         "original_root": ORIGINAL.config,
         "target_root": TARGET.config,
+        "staging_root": STAGING.config,
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
     },
@@ -310,6 +320,7 @@ TODO_LIST_PATHS = [
         "source_root": SOURCE.data,
         "original_root": ORIGINAL.data,
         "target_root": TARGET.data,
+        "staging_root": STAGING.data,
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
     },
@@ -320,6 +331,7 @@ TODO_LIST_PATHS = [
         "source_root": SOURCE.data,
         "original_root": ORIGINAL.data,
         "target_root": TARGET.data,
+        "staging_root": STAGING.data,
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
     },
@@ -338,6 +350,7 @@ TODO_LIST_PATHS = [
         "source_root": SOURCE.data,
         "original_root": ORIGINAL.data,
         "target_root": TARGET.data,
+        "staging_root": STAGING.data,
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
     },
@@ -349,6 +362,7 @@ TODO_LIST_PATHS = [
         "source_root": SOURCE.data,
         "original_root": ORIGINAL.data,
         "target_root": TARGET.data,
+        "staging_root": STAGING.data,
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
         "copy_only": True,
@@ -366,6 +380,7 @@ TODO_LIST_ID_PATHS = [
         "source_root": SOURCE.data,
         "original_root": ORIGINAL.data,
         "target_root": TARGET.data,
+        "staging_root": STAGING.data,
         "target": "auto-existing",             # If you used "auto" in TODO_LIST_PATHS, leave this on "auto-existing". Otherwise specify same path.
         "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
         "tables": {
@@ -398,6 +413,7 @@ TODO_LIST_ID_PATHS = [
         "source_root": SOURCE.config,
         "original_root": ORIGINAL.config,
         "target_root": TARGET.config,
+        "staging_root": STAGING.config,
         "target": "auto-existing",             # If you used "auto" in TODO_LIST_PATHS, leave this on "auto-existing". Otherwise specify same path.
         "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
     },
@@ -407,6 +423,7 @@ TODO_LIST_ID_PATHS = [
         "source_root": SOURCE.data,
         "original_root": ORIGINAL.data,
         "target_root": TARGET.data,
+        "staging_root": STAGING.data,
         "target": "auto-existing",             # If you used "auto" in TODO_LIST_PATHS, leave this on "auto-existing". Otherwise specify same path.
         "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
     },
@@ -417,6 +434,7 @@ TODO_LIST_ID_PATHS = [
         "source_root": SOURCE.data,
         "original_root": ORIGINAL.data,
         "target_root": TARGET.data,
+        "staging_root": STAGING.data,
         "target": "auto-existing",             # If you used "auto" in TODO_LIST_PATHS, leave this on "auto-existing". Otherwise specify same path.
         "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
     },
@@ -426,6 +444,7 @@ TODO_LIST_ID_PATHS = [
         "source_root": SOURCE.data,
         "original_root": ORIGINAL.data,
         "target_root": TARGET.data,
+        "staging_root": STAGING.data,
         "target": "auto-existing",             # If you used "auto" in TODO_LIST_PATHS, leave this on "auto-existing". Otherwise specify same path.
         "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
     },
@@ -440,6 +459,7 @@ TODO_LIST_IDS = [
         "source_root": SOURCE.data,
         "original_root": ORIGINAL.data,
         "target_root": TARGET.data,
+        "staging_root": STAGING.data,
         "target": "auto-existing",             # If you used "auto" in TODO_LIST_PATHS, leave this on "auto-existing". Otherwise specify same path.
         "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
         "tables": {
@@ -536,6 +556,7 @@ TODO_LIST_IDS = [
         "source_root": SOURCE.data,
         "original_root": ORIGINAL.data,
         "target_root": TARGET.data,
+        "staging_root": STAGING.data,
         "target": "auto-existing",             # If you used "auto" in TODO_LIST_PATHS, leave this on "auto-existing". Otherwise specify same path.
         "replacements": {"oldids": "newids"},  # Will be auto-generated during the migration.
         "tables": {
