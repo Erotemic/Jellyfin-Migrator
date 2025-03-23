@@ -52,7 +52,6 @@ LOG_FILE = config.LOG_FILE
 PATH_REPLACEMENTS = config.PATH_REPLACEMENTS
 FS_PATH_REPLACEMENTS = config.FS_PATH_REPLACEMENTS
 ORIGINAL_ROOT = config.ORIGINAL_ROOT
-TARGET_ROOT = config.TARGET_ROOT
 TODO_LIST_PATHS = config.TODO_LIST_PATHS
 TODO_LIST_ID_PATHS = config.TODO_LIST_ID_PATHS
 TODO_LIST_IDS = config.TODO_LIST_IDS
@@ -736,6 +735,8 @@ def update_file_dates(LIBRARY_DB_STAGING_PATH, seen_tasks):
     import ubelt as ub
     import kwutil
     target_to_staging = {r['target']: r['staging'] for r in ub.flatten(seen_tasks)}
+    print(f'target_to_staging = {ub.urepr(target_to_staging, nl=1)}')
+    print(f'rows = {ub.urepr(rows, nl=1)}')
     pman = kwutil.ProgressManager()
     with pman:
         for rowid, target, date_created, date_modified in pman.ProgIter(rows, desc='update dates'):
@@ -751,8 +752,11 @@ def update_file_dates(LIBRARY_DB_STAGING_PATH, seen_tasks):
             staging = Path(staging)
 
             if not staging.exists():
-                rich.print(f"[yellow] File doesn't seem to exist; can't update its dates in the database: {staging!r}")
+                rich.print(f"[yellow]File doesn't seem to exist; can't update its dates in the database: {staging!r}")
                 continue
+
+            cur.execute("UPDATE `TypedBaseItems` SET `Path` = ? WHERE `rowid` = ?",
+                        (os.fspath(staging), rowid))
 
             date_created_ns  = jf_date_str_to_python_ns(date_created)
             date_modified_ns = jf_date_str_to_python_ns(date_modified)
@@ -900,61 +904,62 @@ def main():
     print_log("")
     rich.print("[green]Jellyfin Database Migration complete.")
 
-    d1 = {k: getattr(config.STAGING, k) for k in dir(config.STAGING) if not k.startswith('_')}
-    d2 = {k: getattr(config.TARGET, k) for k in dir(config.STAGING) if not k.startswith('_')}
+    # We don't actually need the following, mounting /staging/staged-data to config should work.
+    # d1 = {k: getattr(config.STAGING, k) for k in dir(config.STAGING) if not k.startswith('_')}
+    # d2 = {k: getattr(config.TARGET, k) for k in dir(config.STAGING) if not k.startswith('_')}
 
-    # Ensure we move directories in the right order
-    import networkx as nx
-    # Map destination paths to source paths
-    # path_mapping = {d2[k]: d1[k] for k in d1}
-    # Add nodes (only using destination paths)
-    G = nx.DiGraph()
-    for k, v in d2.items():
-        G.add_node(v, key=k)
-    G.add_nodes_from(d2.values())
-    for path1 in d2.values():
-        for path2 in d2.values():
-            if path1 != path2 and str(path2).startswith(str(path1)):
-                G.add_edge(path1, path2)  # path1 must be moved before path2
-    G = nx.transitive_reduction(G)
-    for k, v in d2.items():
-        G.nodes[v]['key'] = k
-    nx.write_network_text(G)
+    # # Ensure we move directories in the right order
+    # import networkx as nx
+    # # Map destination paths to source paths
+    # # path_mapping = {d2[k]: d1[k] for k in d1}
+    # # Add nodes (only using destination paths)
+    # G = nx.DiGraph()
+    # for k, v in d2.items():
+    #     G.add_node(v, key=k)
+    # G.add_nodes_from(d2.values())
+    # for path1 in d2.values():
+    #     for path2 in d2.values():
+    #         if path1 != path2 and str(path2).startswith(str(path1)):
+    #             G.add_edge(path1, path2)  # path1 must be moved before path2
+    # G = nx.transitive_reduction(G)
+    # for k, v in d2.items():
+    #     G.nodes[v]['key'] = k
+    # nx.write_network_text(G)
 
-    # Perform a topological sort
-    ordered_moves = [G.nodes[node]['key'] for node in nx.topological_sort(G)]
+    # # Perform a topological sort
+    # ordered_moves = [G.nodes[node]['key'] for node in nx.topological_sort(G)]
 
-    lines = []
-    for k in ordered_moves:
-        v1 = d1[k]
-        v2 = d2[k]
-        path = ub.Path(v1)
-        dst = ub.Path(v2)
+    # lines = []
+    # for k in ordered_moves:
+    #     v1 = d1[k]
+    #     v2 = d2[k]
+    #     path = ub.Path(v1)
+    #     dst = ub.Path(v2)
 
-        # src = '/'.join([str(Path(*path.parts[0:-1])), path.parts[-1]])
-        src = path
-        # Trailing slash is crucial
-        line = (f'test -e {v1} && rsync -avPR {src}/ {dst}/')
+    #     # src = '/'.join([str(Path(*path.parts[0:-1])), path.parts[-1]])
+    #     src = path
+    #     # Trailing slash is crucial
+    #     line = (f'test -e {v1} && rsync -avPR {src}/ {dst}/')
 
-        # src = './' + path.name
-        # line = (f'test -e {src} && mv {src} {dst}')
-        lines.append(line)
+    #     # src = './' + path.name
+    #     # line = (f'test -e {src} && mv {src} {dst}')
+    #     lines.append(line)
 
-    accept_text = '\n'.join(lines)
-    # accept_text = ub.codeblock(
-    #     """
-    #     test -e /staging/staged-cached && rsync -avPR /staging/staged-cached /config/cache
-    #     test -e /staging/staged-config && rsync -avPR /staging/staged-config /config
-    #     test -e /staging/staged-data && rsync -avPR /staging/staged-data /config/data
-    #     test -e /staging/staged-ffmpeg && rsync -avPR /staging/staged-ffmpeg usr/lib/jellyfin-ffmpeg/ffmpeg
-    #     test -e /staging/staged-log && rsync -avPR /staging/staged-log /config/log
-    #     test -e /staging/staged-transcodes && rsync -avPR /staging/staged-transcodes /config/data/transcodes
-    #     """
-    # )
-    print(accept_text)
-    accept_fpath = config.STAGING_ROOT / 'accept.sh'
-    accept_fpath.write_text(accept_text)
-    # accept_fpath.chmod('u+x')
+    # accept_text = '\n'.join(lines)
+    # # accept_text = ub.codeblock(
+    # #     """
+    # #     test -e /staging/staged-cached && rsync -avPR /staging/staged-cached /config/cache
+    # #     test -e /staging/staged-config && rsync -avPR /staging/staged-config /config
+    # #     test -e /staging/staged-data && rsync -avPR /staging/staged-data /config/data
+    # #     test -e /staging/staged-ffmpeg && rsync -avPR /staging/staged-ffmpeg usr/lib/jellyfin-ffmpeg/ffmpeg
+    # #     test -e /staging/staged-log && rsync -avPR /staging/staged-log /config/log
+    # #     test -e /staging/staged-transcodes && rsync -avPR /staging/staged-transcodes /config/data/transcodes
+    # #     """
+    # # )
+    # print(accept_text)
+    # accept_fpath = config.STAGING_ROOT / 'accept.sh'
+    # accept_fpath.write_text(accept_text)
+    # # accept_fpath.chmod('u+x')
 
 if __name__ == "__main__":
     main()

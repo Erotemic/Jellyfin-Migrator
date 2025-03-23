@@ -163,7 +163,6 @@ FS_PATH_REPLACEMENTS = {
 # start processing it with this script.
 ORIGINAL_ROOT = Path(SourceVariant.data)
 SOURCE_ROOT = Path(SourceVariant.data)
-TARGET_ROOT = Path("/jellyfin-dummy")
 # New:
 STAGING_ROOT = Path("/staging")
 

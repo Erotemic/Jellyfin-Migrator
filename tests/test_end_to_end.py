@@ -81,7 +81,11 @@ def main():
     _ = self.exec('du /root/.local/share/jellyfin/data/jellyfin.db', verbose=3)
 
     _ = self.exec('python3 -m jellyfin_migrator', cwd='/Jellyfin-Migrator', verbose=3, system=True, exec_args='-it')
+
     _ = self.exec('ls', cwd='/staging', verbose=3)
+    # Check that the paths look like they updated correctly.
+    # _ = self.exec('sqlite3 /root/.local/share/jellyfin/data/library.db "SELECT Path FROM TypedBaseItems;"', verbose=3)
+    _ = self.exec('sqlite3 /staging/staged-data/data/library.db "SELECT Path FROM TypedBaseItems;"', verbose=3)
 
     dpath = ub.Path.appdir('jellyfin-migrator').ensuredir()
     local_staging = (dpath / 'staging').delete()
@@ -92,6 +96,9 @@ def main():
 
     # Now lets try to port
     from jellyfin_migrator.demo.jellyfin_docker_variant import ensure_docker_variant
+    # Hack:
+    apt_variant.engine_cmd('stop jellyfin_demo_docker_variant')
+    apt_variant.engine_cmd('rm jellyfin_demo_docker_variant')
     docker_variant = ensure_docker_variant(mounts=[
         {
             # hack
@@ -104,6 +111,7 @@ def main():
     docker_variant.exec('apt install rsync sqlite3 --yes', verbose=3)
     docker_variant.exec('du /config/data/jellyfin.db', verbose=3)
     docker_variant.exec('sha1sum /config/data/jellyfin.db', verbose=3)
+    docker_variant.exec('sqlite3 /config/data/library.db "SELECT Path FROM TypedBaseItems;"', verbose=3)
     docker_variant.exec('sqlite3 /config/data/jellyfin.db -header -column "SELECT * FROM Users;"', verbose=3)
 
     # print(f'docker_variant.name={docker_variant.name}')
@@ -132,6 +140,9 @@ def main():
 
 
 def selenium_login():
+    """
+    Logs into a jellyfin server quickly so we can interactively debug.
+    """
     from selenium import webdriver
     from selenium.webdriver.common.by import By
     from selenium.webdriver.chrome.service import Service
@@ -150,11 +161,9 @@ def selenium_login():
         # Open Jellyfin web UI
         driver.get("http://localhost:8097/")
 
-        wait = WebDriverWait(driver, 5)
+        wait = WebDriverWait(driver, 2)
 
         # Step 1: Check if "Connect to server" screen appears
-
-        EC.presence_of_element_located((By.CSS_SELECTOR, "input[placeholder='Enter server address']"))
         try:
             server_input = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[placeholder='Enter server address']")))
             connect_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Connect')]")))
@@ -186,64 +195,6 @@ def selenium_login():
         ...
         # input("Press Enter to close the browser...")  # Keep the browser open for review
         # driver.quit()
-
-
-def grab_selenium_chromedriver(redownload=False):
-    r"""
-
-    pip install webdriver-manager
-
-
-    Automatically download selenium chrome driver if needed
-
-    CommandLine:
-        python -m utool.util_grabdata --test-grab_selenium_chromedriver:1
-
-    Example:
-        >>> # DISABLE_DOCTEST
-        >>> ut.grab_selenium_chromedriver()
-        >>> import selenium.webdriver
-        >>> driver = selenium.webdriver.Chrome()
-        >>> driver.get('http://www.google.com')
-        >>> search_field = driver.find_element_by_name('q')
-        >>> search_field.send_keys('puppies')
-        >>> search_field.send_keys(selenium.webdriver.common.keys.Keys.ENTER)
-
-    Example1:
-        >>> # DISABLE_DOCTEST
-        >>> import selenium.webdriver
-        >>> driver = selenium.webdriver.Firefox()
-        >>> driver.get('http://www.google.com')
-        >>> search_field = driver.find_element_by_name('q')
-        >>> search_field.send_keys('puppies')
-        >>> search_field.send_keys(selenium.webdriver.common.keys.Keys.ENTER)
-    """
-    import utool as ub
-    import os
-    import stat
-    from os.path import join
-    # TODO: use a better download dir (but it must be in the PATh or selenium freaks out)
-    chromedriver_dpath = ut.ensuredir(ut.truepath('~/bin'))
-    chromedriver_fpath = join(chromedriver_dpath, 'chromedriver')
-    if not ut.checkpath(chromedriver_fpath) or redownload:
-        assert chromedriver_dpath in os.environ['PATH'].split(os.pathsep)
-        # TODO: make this work for windows as well
-        if ut.LINUX and ut.util_cplat.is64bit_python():
-            import requests
-            rsp = requests.get('http://chromedriver.storage.googleapis.com/LATEST_RELEASE', timeout=TIMEOUT)
-            assert rsp.status_code == 200
-            url = 'http://chromedriver.storage.googleapis.com/' + rsp.text.strip() + '/chromedriver_linux64.zip'
-            ub.grab_zipped_url(url, download_dir=chromedriver_dpath, redownload=True)
-        else:
-            raise AssertionError('unsupported chrome driver getter script')
-        if not ut.WIN32:
-            st = os.stat(chromedriver_fpath)
-            os.chmod(chromedriver_fpath, st.st_mode | stat.S_IEXEC)
-    ut.assert_exists(chromedriver_fpath)
-    os.environ['webdriver.chrome.driver'] = chromedriver_fpath
-    return chromedriver_fpath
-
-
 
 if __name__ == '__main__':
     """
