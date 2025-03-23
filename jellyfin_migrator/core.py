@@ -113,170 +113,204 @@ def update_db_table(
 
     # Initialize sqlite3 objects
     rich.print(f'[green]update_db_table, Connect to: file={file}')
+    rich.print(f'replace_dict = {ub.urepr(replace_dict, nl=1)}')
     con = sqlite3.connect(file)
-    cur = con.cursor()
+    with con:
+        cur = con.cursor()
 
-    # If only one item has been specified, convert it to a list with one item instead.
-    if not isinstance(path_columns, (tuple, set, list)):
-        path_columns = [path_columns]
-    if not isinstance(json_columns, (tuple, set, list)):
-        json_columns = [json_columns]
-    if not isinstance(jf_image_columns, (tuple, set, list)):
-        jf_image_columns = [jf_image_columns]
+        # If only one item has been specified, convert it to a list with one item instead.
+        if not isinstance(path_columns, (tuple, set, list)):
+            path_columns = [path_columns]
+        if not isinstance(json_columns, (tuple, set, list)):
+            json_columns = [json_columns]
+        if not isinstance(jf_image_columns, (tuple, set, list)):
+            jf_image_columns = [jf_image_columns]
 
-    # This index will be used to separate the json from the path columns in the cur.execute
-    # result further below.
-    json_stop = len(json_columns)
-    path_stop = json_stop + len(path_columns)
+        # This index will be used to separate the json from the path columns in the cur.execute
+        # result further below.
+        json_stop = len(json_columns)
+        path_stop = json_stop + len(path_columns)
 
-    # For the sql query the desired row names should be enclosed in ` ` and comma separated.
-    # It's important to note that the json columns come first, followed by the path columns
-    columns = ", ".join([f"`{e}`" for e in list(json_columns) + list(path_columns)] + list(jf_image_columns))
-    # print(f'columns = {ub.urepr(columns, nl=1)}')
+        column_names = list(json_columns) + list(path_columns) + list(jf_image_columns)
+        # For the sql query the desired row names should be enclosed in ` ` and comma separated.
+        # It's important to note that the json columns come first, followed by the path columns
+        columns = ", ".join([f"`{e}`" for e in list(json_columns) + list(path_columns)] + list(jf_image_columns))
+        # print(f'columns = {ub.urepr(columns, nl=1)}')
 
-    # Query the unique IDs of all rows. Note: we cannot iterate over the rows using
-    #     for row in cur.execute(get rows)
-    # because the rows are modified by the loop, which breaks that iterator. Hence
-    # the solution with reading all row ids and iterating over them instead.
-    # Note: The cur.execute yields tuples with all the columns queried. Which means that
-    # the array below actually contains _tuples_ with the id. This is however desirable
-    # in our case; see below where id is used.
-    todo = [rowid for rowid in cur.execute(f"SELECT `rowid` FROM `{table}`") if rowid[0]]
-    rows_count = len(todo)
-    t = time()
-    for progress, id in enumerate(todo):
-        # Print the progress every second. Note: this is the only usage of the "progress" variable.
-        now = time()
-        if now - t > 1:
-            print_log(f"Progress: {progress} / {rows_count} rows")
-            t = now
+        # Query the unique IDs of all rows. Note: we cannot iterate over the rows using
+        #     for row in cur.execute(get rows)
+        # because the rows are modified by the loop, which breaks that iterator. Hence
+        # the solution with reading all row ids and iterating over them instead.
+        # Note: The cur.execute yields tuples with all the columns queried. Which means that
+        # the array below actually contains _tuples_ with the id. This is however desirable
+        # in our case; see below where id is used.
+        todo = [rowid for rowid in cur.execute(f"SELECT `rowid` FROM `{table}`") if rowid[0]]
+        rows_count = len(todo)
+        t = time()
+        for progress, id in enumerate(todo):
+            # Print the progress every second. Note: this is the only usage of the "progress" variable.
+            now = time()
+            if now - t > 1:
+                print_log(f"Progress: {progress} / {rows_count} rows")
+                t = now
 
-        # Query the columns we want to check/modify of the current row (selected by id).
-        # Since the id is a binary object, it's not directly included in the f-string.
-        # The cur.execute expects as second argument a _tuple_ with as many elements as
-        # there are ? characters in the query string. This is the reason why we kept the
-        # IDs as tuple. The only other place where this id is used is in the update query
-        # at the end of the loop which requires - just like here - a tuple.
-        row = [r for r in cur.execute(f"SELECT {columns} FROM `{table}` WHERE `rowid` = ?", id)]
-        # This _should_ not occur, but I think I have seen it happen rarely. Safe is safe.
-        if len(row) != 1:
-            print_log(f"Error with rowid {id}! Resulted in {len(row)} rows instead of 1. Skipping.")
-            continue
-        # cur.execute returns a 2D tuple, containing all rows matching the query, and then
-        # in each row the selected columns. We only selected a single row, hence row[0] is
-        # all we care about (and all there is, see error handling above).
-        # Secondly we want row to be modifiable, hence the conversion to a list.
-        # list(row[0]) would btw return a list with 1 element: the tuple of the columns.
-        row = [e for e in row[0]]
-
-        # result has the structure {column_name: updated_data} which makes it very easy to build
-        # the update query at the end.
-        result = dict()
-
-        # It's important to note that the tuple from cur.execute contains the columns _in the order
-        # of the query string_. Therefore, we can separate json and path entries like this.
-        jsons = row[:json_stop]
-        paths = row[json_stop:path_stop]
-        jf_imgs = row[path_stop:]
-        for i, data in enumerate(jsons):
-            if data:
-                # There are numerous rows that have empty columns which would result in an error
-                # from json.loads. Just skip them
-                data = json.loads(data)
-                data, mo, ig, wrns = replace_func(data, replace_dict)
-                if wrns:
-                    rich.print('[yellow]WARNING1')
-                for warning in wrns:
-                    print_log(warning)
-                modified += mo
-                ignored  += ig
-                result[json_columns[i]] = json.dumps(data)
-        for i, path in enumerate(paths):
-            # One could also skip the empty objects here, but recursive_path_replacer handles them
-            # just fine (leaves them untouched).
-            path, mo, ig, wrns = replace_func(path, replace_dict)
-            if wrns:
-                rich.print('[yellow]WARNING2')
-            for warning in wrns:
-                print_log(warning)
-            modified += mo
-            ignored  += ig
-            result[path_columns[i]] = path
-        for i, imgs in enumerate(jf_imgs):
-            # Jellyfin Image Metadata. Some DB entries look like this:
-            #     %MetadataPath%\library\71\71d037e6e74015a5a6231ce1b7912acf\poster.jpg*637693022742223153*Primary*198*198*eJC5#hK#Dj9GR/V@j]xuX8NG0x+xgN%MxaX7spNGnitQ$kK0wyV@Rj # noqa
-            # Yeah. That's a path and some other data within the same string, separated by *. More specifically:
-            #     path * last modified date * image type * width * height * blur hash
-            # where width, height, blur hash are apparently optional.
-            # In theory, the * could occur as normal character within regular paths but it's unlikely.
-            # Oh, and did I mention that such strings can contain multiple of these structures separated by a | ?
-            # Source (Jellyfin Server 10.7.7): DeserializeImages, AppendItemImageInfo:
-            # https://github.com/jellyfin/jellyfin/blob/045761605531f98c55f379ac9eb5b5b6004ef670/Emby.Server.Implementations/Data/SqliteItemRepository.cs#L1118 # noqa
-            if not imgs:
+            # Query the columns we want to check/modify of the current row (selected by id).
+            # Since the id is a binary object, it's not directly included in the f-string.
+            # The cur.execute expects as second argument a _tuple_ with as many elements as
+            # there are ? characters in the query string. This is the reason why we kept the
+            # IDs as tuple. The only other place where this id is used is in the update query
+            # at the end of the loop which requires - just like here - a tuple.
+            row = [r for r in cur.execute(f"SELECT {columns} FROM `{table}` WHERE `rowid` = ?", id)]
+            # This _should_ not occur, but I think I have seen it happen rarely. Safe is safe.
+            if len(row) != 1:
+                print_log(f"Error with rowid {id}! Resulted in {len(row)} rows instead of 1. Skipping.")
+                raise AssertionError('ERROR: should not get this')
                 continue
-            imgs = imgs.split("|")
-            for j, img_properties in enumerate(imgs):
-                if not img_properties:
-                    continue
-                img_properties = img_properties.split("*")
-                # path = first property
-                img_properties[0], mo, ig, wnrs = replace_func(img_properties[0], replace_dict)
+            # cur.execute returns a 2D tuple, containing all rows matching the query, and then
+            # in each row the selected columns. We only selected a single row, hence row[0] is
+            # all we care about (and all there is, see error handling above).
+            # Secondly we want row to be modifiable, hence the conversion to a list.
+            # list(row[0]) would btw return a list with 1 element: the tuple of the columns.
+            row = [e for e in row[0]]
+
+            # result has the structure {column_name: updated_data} which makes it very easy to build
+            # the update query at the end.
+            result = dict()
+            old_rowdata = ub.dzip(column_names, row)
+
+            # It's important to note that the tuple from cur.execute contains the columns _in the order
+            # of the query string_. Therefore, we can separate json and path entries like this.
+            jsons = row[:json_stop]
+            paths = row[json_stop:path_stop]
+            jf_imgs = row[path_stop:]
+            for i, data in enumerate(jsons):
+                if data:
+                    # There are numerous rows that have empty columns which would result in an error
+                    # from json.loads. Just skip them
+                    data = json.loads(data)
+                    data, mo, ig, wrns = replace_func(data, replace_dict)
+                    if wrns:
+                        rich.print('[yellow]WARNING1')
+                    for warning in wrns:
+                        print_log(warning)
+                    modified += mo
+                    ignored  += ig
+                    result[json_columns[i]] = json.dumps(data)
+            # print(f'paths = {ub.urepr(paths, nl=1)}')
+            for i, path in enumerate(paths):
+                # print(f'path={path}')
+                # One could also skip the empty objects here, but recursive_path_replacer handles them
+                # just fine (leaves them untouched).
+                path, mo, ig, wrns = replace_func(path, replace_dict)
+                # print(f'replace_func={replace_func}')
+                # print(f'wrns={wrns}')
+                # print(f'ig={ig}')
+                # print(f'mo={mo}')
+                # print(f'path={path}')
                 if wrns:
-                    rich.print('[yellow]WARNING3')
+                    rich.print('[yellow]WARNING2')
                 for warning in wrns:
                     print_log(warning)
-                imgs[j] = "*".join(img_properties)
                 modified += mo
                 ignored  += ig
-            imgs = "|".join(imgs)
-            result[jf_image_columns[i]] = imgs
+                result[path_columns[i]] = path
+            for i, imgs in enumerate(jf_imgs):
+                # Jellyfin Image Metadata. Some DB entries look like this:
+                #     %MetadataPath%\library\71\71d037e6e74015a5a6231ce1b7912acf\poster.jpg*637693022742223153*Primary*198*198*eJC5#hK#Dj9GR/V@j]xuX8NG0x+xgN%MxaX7spNGnitQ$kK0wyV@Rj # noqa
+                # Yeah. That's a path and some other data within the same string, separated by *. More specifically:
+                #     path * last modified date * image type * width * height * blur hash
+                # where width, height, blur hash are apparently optional.
+                # In theory, the * could occur as normal character within regular paths but it's unlikely.
+                # Oh, and did I mention that such strings can contain multiple of these structures separated by a | ?
+                # Source (Jellyfin Server 10.7.7): DeserializeImages, AppendItemImageInfo:
+                # https://github.com/jellyfin/jellyfin/blob/045761605531f98c55f379ac9eb5b5b6004ef670/Emby.Server.Implementations/Data/SqliteItemRepository.cs#L1118 # noqa
+                if not imgs:
+                    continue
+                imgs = imgs.split("|")
+                for j, img_properties in enumerate(imgs):
+                    if not img_properties:
+                        continue
+                    img_properties = img_properties.split("*")
+                    # path = first property
+                    img_properties[0], mo, ig, wnrs = replace_func(img_properties[0], replace_dict)
+                    if wrns:
+                        rich.print('[yellow]WARNING3')
+                    for warning in wrns:
+                        print_log(warning)
+                    imgs[j] = "*".join(img_properties)
+                    modified += mo
+                    ignored  += ig
+                imgs = "|".join(imgs)
+                result[jf_image_columns[i]] = imgs
 
-        # Similar to the initial query we construct a comma separated list of the columns, only this
-        # time we write
-        #     `columnname` = ?
-        # While the new values are all strings, the question mark avoids any issues with handling
-        # backslashes etc. The library offers an easy, built-in way to do it so there's no reason
-        # to mess with it myself.
-        # Note that this relies on result.keys() and result.values() returning the entries in the
-        # same order (which is guaranteed).
-        # Note: it can happen that no changes are made at all. In this case we can abort here and
-        #       go for the next job from the todo_list.
-        if not result:
-            continue
-        keys = ", ".join([f"`{k}` = ?" for k in result.keys()])
-        query = f"UPDATE `{table}` SET {keys} WHERE `rowid` = ?"
+            new_rowdata = result
 
-        # The query has a question mark for each updated column plus one for the id to identify
-        # the correct row.
-        args = tuple(result.values()) + id
-        try:
-            cur.execute(query, args)
-        except Exception as e:
-            # This was mainly for debugging purposes and shouldn't be reached anymore. Doesn't
-            # hurt to have it though.
-            print('!!!!')
-            print_log("Error:", e)
-            print_log("Query:", query)
-            print_log("Args: ", args)
-            print_log(e)
-            raise
-            exit()
-        else:
-            if cur.rowcount < 1:
-                # This was mainly for debugging purposes and shouldn't be reached anymore.
-                # Doesn't hurt to have it though.
+            # print(f'replace_dict = {ub.urepr(replace_dict, nl=1)}')
+            # print(f'old_rowdata = {ub.urepr(old_rowdata, nl=1)}')
+            # print(f'new_rowdata = {ub.urepr(new_rowdata, nl=1)}')
+
+            new_rowdata = {k.lower(): v for k, v in new_rowdata.items()}
+            if 'path' in old_rowdata:
+                if old_rowdata['path'] == '/data/jellyfin/media/music/Clair_de_Lune_-_Wright_Brass_-_United_States_Air_Force_Band_of_Flight.mp3':
+                    print(f'old_rowdata = {ub.urepr(old_rowdata, nl=1)}')
+                    print(f'new_rowdata = {ub.urepr(new_rowdata, nl=1)}')
+            if 'path' in new_rowdata:
+                if new_rowdata['path'] == '/data/jellyfin/media/music/Clair_de_Lune_-_Wright_Brass_-_United_States_Air_Force_Band_of_Flight.mp3':
+                    raise Exception
+            if 'path' not in new_rowdata:
+                if old_rowdata['path'] is not None:
+                    raise AssertionError('UNCHANGED PATH')
+
+            # Similar to the initial query we construct a comma separated list of the columns, only this
+            # time we write
+            #     `columnname` = ?
+            # While the new values are all strings, the question mark avoids any issues with handling
+            # backslashes etc. The library offers an easy, built-in way to do it so there's no reason
+            # to mess with it myself.
+            # Note that this relies on result.keys() and result.values() returning the entries in the
+            # same order (which is guaranteed).
+            # Note: it can happen that no changes are made at all. In this case we can abort here and
+            #       go for the next job from the todo_list.
+            if not result:
+                continue
+
+            # THIS IS WHERE PATH NAMES ARE REPLACED IN DATABASE FILES.
+            keys = ", ".join([f"`{k}` = ?" for k in result.keys()])
+            query = f"UPDATE `{table}` SET {keys} WHERE `rowid` = ?"
+
+            # The query has a question mark for each updated column plus one for the id to identify
+            # the correct row.
+            args = tuple(result.values()) + id
+            try:
+                cur.execute(query, args)
+            except Exception as e:
+                # This was mainly for debugging purposes and shouldn't be reached anymore. Doesn't
+                # hurt to have it though.
                 print('!!!!')
-                print_log("No data modified!")
+                print_log("Error:", e)
                 print_log("Query:", query)
                 print_log("Args: ", args)
+                print_log(e)
                 raise
                 exit()
-    print_log(f"update_db_table, Processed {rows_count} rows in table {table}. ")
-    print_log(f"update_db_table, {modified} paths have been modified.")
+            else:
+                if cur.rowcount < 1:
+                    # This was mainly for debugging purposes and shouldn't be reached anymore.
+                    # Doesn't hurt to have it though.
+                    print('!!!!')
+                    print_log("No data modified!")
+                    print_log("Query:", query)
+                    print_log("Args: ", args)
+                    raise
+                    exit()
+        print_log(f"update_db_table, Processed {rows_count} rows in table {table}. ")
+        print_log(f"update_db_table, {modified} paths have been modified.")
 
-    # Write the updated database back to the file.
-    con.commit()
-    con.close()
+        # Write the updated database back to the file.
+        con.commit()
+        con.execute("PRAGMA wal_checkpoint(FULL);")  # Flush WAL changes to main database
+
+    # raise Exception
 
 
 def update_xml(file: Path, replace_dict: dict, replace_func) -> None:
@@ -472,6 +506,9 @@ def collect_files_to_process(lst: list, process_func, replace_func, path_replace
                 # hack to remove worse global code, need to cleanup
                 process_kwargs = {}
 
+            if 'replacements' in process_kwargs:
+                process_kwargs['replacements'].update(path_replacements)
+
             # process_func can either be
             # update_db_table_ids or process_file
             staged_tasks.append({
@@ -508,14 +545,17 @@ def process_file(
     if staging.is_dir():
         return
 
+    no_log = False
     if not no_log:
         print_log("Processing", staging)
 
     if copy_only:
         # No need to do any further checks.
+        print_log("Copy only")
         return
     elif staging.suffix == ".db":
         # If it's "library.db", save it for later (see comment at declaration):
+        debug_staging_library('PROCESS_FILE-BEFORE')
         if staging.name == "library.db":
             # TODO: WE REALLY NEED TO GET RID OF GLOBALS!
             global LIBRARY_DB_SOURCE_PATH, LIBRARY_DB_STAGING_PATH
@@ -530,20 +570,21 @@ def process_file(
             # See update_db_table and/or the todo_list.
             # JON FIXME: the replacements dict probably needs to be wrt to staging, previously wrt to target
             update_db_table(file=staging, replace_dict=replacements, replace_func=replace_func, table=table, **kwargs)
+        debug_staging_library('PROCESS_FILE-AFTER')
     elif staging.suffix == ".xml" or staging.suffix == ".nfo":
         update_xml(file=staging, replace_dict=replacements, replace_func=replace_func)
     elif staging.suffix == ".mblink":
-        # .mblink files only contain a path, nothing else.
+        # .mblink files only contain a path (to what seems to be a media library), nothing else.
         with open(staging, "r", encoding="utf-8") as f:
             path = f.read()
-        path, modified, ignored, wrns = replace_func(path, replacements)
+        new_path, modified, ignored, wrns = replace_func(path, replacements)
         if wrns:
             rich.print('[yellow]WARNING(process_file.1)')
         for warning in wrns:
             print_log(warning)
         print_log(f"Processed {modified + ignored} paths, {modified} paths have been modified.")
         with open(staging, "w", encoding="utf-8") as f:
-            f.write(path)
+            f.write(new_path)
     elif staging.suffix == ".json":
         # There are also json files with the ending .js but I haven't found any with paths.
         # Load the file by the json module (resulting in a dict or list object) and process
@@ -606,120 +647,136 @@ def update_db_table_ids(
 
     # Initialize sqlite3 objects
     con = sqlite3.connect(staging)
-    cur = con.cursor()
+    with con:
+        cur = con.cursor()
 
-    updated_ids_count = 0
-    # That's a very nested loop and could probably be written more efficiently using
-    # multiprocessing and more advanced sqlite queries.
-    for table, columns_by_id_type in tables.items():
-        for id_type, columns in columns_by_id_type.items():
-            for column in columns:
-                print_log(f"Updating {column} IDs in table {table}...")
-                # See comment about iterating over rows while modifying them in update_db_table.
-                try:
-                    rows = [r for r in cur.execute(f"SELECT DISTINCT `{column}` from `{table}`")]
-                except sqlite3.OperationalError:
-                    print_log(f'ERROR: selecting distinct row from table={table} column={column} in {staging}')
-                    raise
+        updated_ids_count = 0
+        # That's a very nested loop and could probably be written more efficiently using
+        # multiprocessing and more advanced sqlite queries.
+        for table, columns_by_id_type in tables.items():
+            for id_type, columns in columns_by_id_type.items():
+                for column in columns:
+                    print_log(f"Updating {column} IDs in table {table}...")
+                    # See comment about iterating over rows while modifying them in update_db_table.
+                    try:
+                        rows = [r for r in cur.execute(f"SELECT DISTINCT `{column}` from `{table}`")]
+                    except sqlite3.OperationalError:
+                        print_log(f'ERROR: selecting distinct row from table={table} column={column} in {staging}')
+                        raise
 
-                progress = 0
-                rowcount = len(rows)
-                t = time()
-                for old_id, in rows:
-                    progress += 1
-                    # Print the progress every second. Note: this is the only usage of the "progress" variable.
-                    now = time()
-                    if now - t > 1:
-                        print_log(f"Progress: {progress} / {rowcount} rows")
-                        t = now
-                    if old_id in IDS[id_type]:
-                        new_id = IDS[id_type][old_id]
-                        try:
-                            cur.execute(f"UPDATE `{table}` SET `{column}` = ? WHERE `{column}` = ?", (new_id, old_id))
-                        except sqlite3.IntegrityError:
-                            col_names  = [x[0] for x in cur.execute(f"SELECT name FROM PRAGMA_TABLE_INFO('{table}')")]
-                            rows = [x for x in cur.execute(f"SELECT * FROM `{table}` WHERE `{column}` = ?", (old_id,))]
-                            rows = [dict(zip(col_names, row)) for row in rows]
-                            print_log(f"Encountered {len(rows)} duplicated entries")
-                            for i, row in enumerate(rows):
-                                print_log(f"Deleting ({i + 1}/{len(rows)}): ", row)
-                            cur.execute(f"DELETE FROM `{table}` WHERE `{column}` = ?", (old_id,))
-                        updated_ids_count += 1
+                    progress = 0
+                    rowcount = len(rows)
+                    t = time()
+                    for old_id, in rows:
+                        progress += 1
+                        # Print the progress every second. Note: this is the only usage of the "progress" variable.
+                        now = time()
+                        if now - t > 1:
+                            print_log(f"Progress: {progress} / {rowcount} rows")
+                            t = now
+                        if old_id in IDS[id_type]:
+                            new_id = IDS[id_type][old_id]
+                            try:
+                                cur.execute(f"UPDATE `{table}` SET `{column}` = ? WHERE `{column}` = ?", (new_id, old_id))
+                            except sqlite3.IntegrityError:
+                                col_names  = [x[0] for x in cur.execute(f"SELECT name FROM PRAGMA_TABLE_INFO('{table}')")]
+                                rows = [x for x in cur.execute(f"SELECT * FROM `{table}` WHERE `{column}` = ?", (old_id,))]
+                                rows = [dict(zip(col_names, row)) for row in rows]
+                                print_log(f"Encountered {len(rows)} duplicated entries")
+                                for i, row in enumerate(rows):
+                                    print_log(f"Deleting ({i + 1}/{len(rows)}): ", row)
+                                cur.execute(f"DELETE FROM `{table}` WHERE `{column}` = ?", (old_id,))
+                            updated_ids_count += 1
 
-    # Write the updated database back to the file.
-    con.commit()
-    con.close()
+        # Write the updated database back to the file.
+        con.commit()
+        con.execute("PRAGMA wal_checkpoint(FULL);")  # Flush WAL changes to main database
+        con.commit()
+
     print_log(f"{updated_ids_count} IDs updated.")
 
 
 def get_ids(LIBRARY_DB_STAGING_PATH):
     rich.print(f'[green] Connect to LIBRARY_DB_STAGING_PATH={LIBRARY_DB_STAGING_PATH}')
-    con = sqlite3.connect(LIBRARY_DB_STAGING_PATH)
-    cur = con.cursor()
 
-    id_replacements_bin = dict()
-    for guid, item_type, path in cur.execute("SELECT `guid`, `type`, `Path` FROM `TypedBaseItems`"):
-        if not path or path.startswith("%"):
-            continue
+    # Weird, for some reason read only mode causes an issue here. ChatGPT says
+    # it might be because of the WAL (Write-Ahead Logging) files, because we
+    # have a library.db-shm and library.db-wal file.
 
-        # Source: https://github.com/jellyfin/jellyfin/blob/7e8428e588b3f0a0574da44081098c64fe1a47d7/Emby.Server.Implementations/Library/LibraryManager.cs#L504 # noqa
-        new_guid = get_dotnet_MD5(item_type + path)
-        # Omit IDs that haven't changed at all. Happens if not _all_ paths are modified
-        if new_guid != guid:
-            id_replacements_bin[guid] = new_guid
-
-    ### Adapted from id_scanner
-    id_replacements_str               = {bid2sid(k): bid2sid(v) for k, v in id_replacements_bin.items()}
-    id_replacements_str_dash          = {sid2did(k): sid2did(v) for k, v in id_replacements_str.items()}
-    id_replacements_ancestor_str      = {convert_ancestor_id(k): convert_ancestor_id(v) for k, v in id_replacements_str.items()}
-    id_replacements_ancestor_bin      = {sid2bid(k): sid2bid(v) for k, v in id_replacements_ancestor_str.items()}
-    id_replacements_ancestor_str_dash = {sid2did(k): sid2did(v) for k, v in id_replacements_ancestor_str.items()}
-
-    IDS = {
-        "bin": id_replacements_bin,
-        "str": id_replacements_str,
-        "str-dash": id_replacements_str_dash,
-        "ancestor-bin": id_replacements_ancestor_bin,
-        "ancestor-str": id_replacements_ancestor_str,
-        "ancestor-str-dash": id_replacements_ancestor_str_dash,
-    }
-    ### End of adapted code
-
-    # Check for collisions between old and new ids in both the normal and ancestor format.
-    # If there are collisions, get the (new) filepaths causing them
-    uniques = set()
-    duplicates = list()
-    for id in id_replacements_str.values():
-        if id in uniques:
-            duplicates.append(id)
-        else:
-            uniques.add(id)
-
-    # if there are duplicates, find the matching old_ids to query the lines from the database
-    if duplicates:
-        old_ids = []
-        for k, v in id_replacements_str.items():
-            if v in duplicates:
-                old_ids.append(sid2bid(k))
-
-        duplicates_new = [next(cur.execute("SELECT `guid`, `Path` FROM `TypedBaseItems` WHERE `guid` = ?", (guid,))) for guid in old_ids]
-        # also fetch the old paths for better understanding/debugging
-        con.close()
-        con = sqlite3.connect(LIBRARY_DB_SOURCE_PATH)
+    uri = 'file:' + str(LIBRARY_DB_STAGING_PATH) + '?mode=ro'
+    assert not os.path.exists(uri)
+    con = sqlite3.connect(uri, uri=True)
+    assert not os.path.exists(uri)
+    # temp_path = ub.Path(LIBRARY_DB_STAGING_PATH).augment(stemsuffix='tmp')
+    # ub.Path(LIBRARY_DB_STAGING_PATH).copy(temp_path, overwrite=True)
+    # con = sqlite3.connect(str(temp_path))
+    with con:
         cur = con.cursor()
-        duplicates_old = [next(cur.execute("SELECT `guid`, `Path` FROM `TypedBaseItems` WHERE `guid` = ?", (guid,))) for guid in old_ids]
-        duplicates_old = dict(duplicates_old)
-        con.close()
 
-        print_log(f"Warning! {len(duplicates)} duplicates detected within new ids. This indicates that you're "
-                  f"merging media files from different directories into fewer ones. If that's the case for all the "
-                  f"collisions listed below, you can likely ignore this warning, otherwise recheck your path settings. "
-                  f"IMPORTANT: The duplicated entries will be removed from the database. You got a backup of the "
-                  f"database, right?")
-        print_log("Duplicates: ")
-        for id, newpath in duplicates_new:
-            print_log(f"  Item ID: {bid2sid(id)},  Paths (old -> new): {duplicates_old[id]} -> {newpath}")
-        input("Press Enter to continue or CTRL+C to abort. ")
+        id_replacements_bin = dict()
+        for guid, item_type, path in cur.execute("SELECT `guid`, `type`, `Path` FROM `TypedBaseItems`"):
+            if not path or path.startswith("%"):
+                continue
+
+            # Source: https://github.com/jellyfin/jellyfin/blob/7e8428e588b3f0a0574da44081098c64fe1a47d7/Emby.Server.Implementations/Library/LibraryManager.cs#L504 # noqa
+            new_guid = get_dotnet_MD5(item_type + path)
+            # Omit IDs that haven't changed at all. Happens if not _all_ paths are modified
+            if new_guid != guid:
+                id_replacements_bin[guid] = new_guid
+
+        ### Adapted from id_scanner
+        id_replacements_str               = {bid2sid(k): bid2sid(v) for k, v in id_replacements_bin.items()}
+        id_replacements_str_dash          = {sid2did(k): sid2did(v) for k, v in id_replacements_str.items()}
+        id_replacements_ancestor_str      = {convert_ancestor_id(k): convert_ancestor_id(v) for k, v in id_replacements_str.items()}
+        id_replacements_ancestor_bin      = {sid2bid(k): sid2bid(v) for k, v in id_replacements_ancestor_str.items()}
+        id_replacements_ancestor_str_dash = {sid2did(k): sid2did(v) for k, v in id_replacements_ancestor_str.items()}
+
+        IDS = {
+            "bin": id_replacements_bin,
+            "str": id_replacements_str,
+            "str-dash": id_replacements_str_dash,
+            "ancestor-bin": id_replacements_ancestor_bin,
+            "ancestor-str": id_replacements_ancestor_str,
+            "ancestor-str-dash": id_replacements_ancestor_str_dash,
+        }
+        ### End of adapted code
+
+        # Check for collisions between old and new ids in both the normal and ancestor format.
+        # If there are collisions, get the (new) filepaths causing them
+        uniques = set()
+        duplicates = list()
+        for id in id_replacements_str.values():
+            if id in uniques:
+                duplicates.append(id)
+            else:
+                uniques.add(id)
+
+        # if there are duplicates, find the matching old_ids to query the lines from the database
+        if duplicates:
+            old_ids = []
+            for k, v in id_replacements_str.items():
+                if v in duplicates:
+                    old_ids.append(sid2bid(k))
+
+            duplicates_new = [next(cur.execute("SELECT `guid`, `Path` FROM `TypedBaseItems` WHERE `guid` = ?", (guid,))) for guid in old_ids]
+
+            # also fetch the old paths for better understanding/debugging
+            src_con = sqlite3.connect(LIBRARY_DB_SOURCE_PATH + '?mode=ro', uri=True)
+            with src_con:
+                cur = src_con.cursor()
+                duplicates_old = [next(cur.execute("SELECT `guid`, `Path` FROM `TypedBaseItems` WHERE `guid` = ?", (guid,))) for guid in old_ids]
+                duplicates_old = dict(duplicates_old)
+
+            print_log(f"Warning! {len(duplicates)} duplicates detected within new ids. This indicates that you're "
+                      f"merging media files from different directories into fewer ones. If that's the case for all the "
+                      f"collisions listed below, you can likely ignore this warning, otherwise recheck your path settings. "
+                      f"IMPORTANT: The duplicated entries will be removed from the database. You got a backup of the "
+                      f"database, right?")
+            print_log("Duplicates: ")
+            for id, newpath in duplicates_new:
+                print_log(f"  Item ID: {bid2sid(id)},  Paths (old -> new): {duplicates_old[id]} -> {newpath}")
+            input("Press Enter to continue or CTRL+C to abort. ")
+    con.close()
     return IDS
 
 
@@ -728,54 +785,52 @@ def update_file_dates(LIBRARY_DB_STAGING_PATH, seen_tasks):
               "This will take a couple minutes")
 
     con = sqlite3.connect(LIBRARY_DB_STAGING_PATH)
-    cur = con.cursor()
+    with con:
+        cur = con.cursor()
 
-    rows = [r for r in cur.execute("SELECT `rowid`, `Path`, `DateCreated`, `DateModified` FROM `TypedBaseItems`")]
+        rows = [r for r in cur.execute("SELECT `rowid`, `Path`, `DateCreated`, `DateModified` FROM `TypedBaseItems`")]
 
-    import ubelt as ub
-    import kwutil
-    target_to_staging = {r['target']: r['staging'] for r in ub.flatten(seen_tasks)}
-    print(f'target_to_staging = {ub.urepr(target_to_staging, nl=1)}')
-    print(f'rows = {ub.urepr(rows, nl=1)}')
-    pman = kwutil.ProgressManager()
-    with pman:
-        for rowid, target, date_created, date_modified in pman.ProgIter(rows, desc='update dates'):
-            if not target:
-                continue
-            # Determine file path as seen by this script (see FS_PATH_REPLACEMENTS for details)
-            # Code taken from get_target
-            # print(f'FS_PATH_REPLACEMENTS={FS_PATH_REPLACEMENTS}')
-            target, idgaf1, idgaf2, wrns = nested_root_path_replacer(target, to_replace=FS_PATH_REPLACEMENTS)
-            for warning in wrns:
-                print_log(warning)
-            staging = target_to_staging.get(target, target)
-            staging = Path(staging)
+        import ubelt as ub
+        import kwutil
+        target_to_staging = {r['target']: r['staging'] for r in ub.flatten(seen_tasks)}
+        print(f'target_to_staging = {ub.urepr(target_to_staging, nl=1)}')
+        print(f'rows = {ub.urepr(rows, nl=1)}')
+        pman = kwutil.ProgressManager()
+        with pman:
+            for rowid, target, date_created, date_modified in pman.ProgIter(rows, desc='update dates'):
+                if not target:
+                    continue
+                # Determine file path as seen by this script (see FS_PATH_REPLACEMENTS for details)
+                # Code taken from get_target
+                # print(f'FS_PATH_REPLACEMENTS={FS_PATH_REPLACEMENTS}')
+                target, idgaf1, idgaf2, wrns = nested_root_path_replacer(target, to_replace=FS_PATH_REPLACEMENTS)
+                for warning in wrns:
+                    print_log(warning)
 
-            if not staging.exists():
-                rich.print(f"[yellow]File doesn't seem to exist; can't update its dates in the database: {staging!r}")
-                continue
+                staging = target_to_staging.get(target, target)
+                staging = Path(staging)
 
-            cur.execute("UPDATE `TypedBaseItems` SET `Path` = ? WHERE `rowid` = ?",
-                        (os.fspath(staging), rowid))
+                if not staging.exists():
+                    rich.print(f"[yellow]File doesn't seem to exist; can't update its dates in the database: {staging!r}")
+                    continue
 
-            date_created_ns  = jf_date_str_to_python_ns(date_created)
-            date_modified_ns = jf_date_str_to_python_ns(date_modified)
+                date_created_ns  = jf_date_str_to_python_ns(date_created)
+                date_modified_ns = jf_date_str_to_python_ns(date_modified)
 
-            if date_created_ns >= 0 and date_modified_ns >= 0:
-                continue
+                if date_created_ns >= 0 and date_modified_ns >= 0:
+                    continue
 
-            filestats = os.stat(staging)
+                filestats = os.stat(staging)
 
-            if date_created_ns < 0:
-                new_date_created = get_datestr_from_python_time_ns(filestats.st_ctime_ns)
-                cur.execute("UPDATE `TypedBaseItems` SET `DateCreated` = ? WHERE `rowid` = ?",
-                            (new_date_created, rowid))
-            if date_modified_ns < 0:
-                new_date_modified = get_datestr_from_python_time_ns(filestats.st_mtime_ns)
-                cur.execute("UPDATE `TypedBaseItems` SET `DateModified` = ? WHERE `rowid` = ?",
-                            (new_date_modified, rowid))
+                if date_created_ns < 0:
+                    new_date_created = get_datestr_from_python_time_ns(filestats.st_ctime_ns)
+                    cur.execute("UPDATE `TypedBaseItems` SET `DateCreated` = ? WHERE `rowid` = ?",
+                                (new_date_created, rowid))
+                if date_modified_ns < 0:
+                    new_date_modified = get_datestr_from_python_time_ns(filestats.st_mtime_ns)
+                    cur.execute("UPDATE `TypedBaseItems` SET `DateModified` = ? WHERE `rowid` = ?",
+                                (new_date_modified, rowid))
 
-    con.commit()
     print_log("Done.")
 
 
@@ -792,6 +847,12 @@ def execute_tasks(staged_tasks):
         process_kwargs = task.pop('process_kwargs')
         original = task.pop('original')
         source = task.pop('source')
+        if str(source).endswith('.db-shm'):
+            print_log(f"SKIP {source}... has special handling")
+            continue
+        if str(source).endswith('.db-wal'):
+            print_log(f"SKIP {source}... has special handling")
+            continue
         staging = task.pop('staging')
         target = task.pop('target')
         tables = task.pop('tables')
@@ -802,14 +863,41 @@ def execute_tasks(staged_tasks):
                 staging.parent.mkdir(parents=True)
             if not no_log:
                 print_log(f"Copy... {source} -> {staging}", end=" ")
+            # HACK:
             copy(source, staging)
             if not no_log:
                 print_log("Done.")
+            if source.name == 'library.db':
+                print('HACK: also copy wal and shm files')
+                src2 = ub.Path(source).augment(ext='.db-shm')
+                if src2.exists():
+                    dst2 = ub.Path(staging).augment(ext='.db-shm')
+                    print(f'dst2 = {ub.urepr(dst2, nl=1)}')
+                    copy(src2, dst2)
+                src2 = ub.Path(source).augment(ext='.db-wal')
+                if src2.exists():
+                    dst3 = ub.Path(staging).augment(ext='.db-wal')
+                    print(f'dst3 = {ub.urepr(dst3, nl=1)}')
+                    copy(src2, dst3)
+                con = sqlite3.connect(staging)
+                with con:
+                    con.execute("PRAGMA wal_checkpoint(FULL);")
+                    con.commit()
+                    con.execute("PRAGMA VACUUM;")
+                    con.commit()
+                    con.execute("PRAGMA integrity_check;")
+                    con.commit()
+                con.close()
+                # dst3.delete()
+                # dst2.delete()
+        else:
+            print_log(f"SKIP Copy... {source} -> {staging}", end="\n")
 
         process_func(source=source, staging=staging, target=target,
                      original=original, tables=tables,
                      **process_kwargs)
     rich.print('[blue]Finished Tasks')
+    debug_staging_library('AFTER EXCUTE TASKS', show_table=True)
 
 
 def main():
@@ -842,6 +930,8 @@ def main():
     seen_tasks.append(staged_tasks)
     execute_tasks(staged_tasks)
 
+    debug_staging_library('BEFORE GET IDS', show_table=True)
+
     ### Update IDs
     print_log("STEP2. Update IDs.")
     # Generate IDs based on those new paths and save them in the global variable
@@ -849,6 +939,7 @@ def main():
     # ID types occurring in paths (<- search for that to find another comment with more details if you missed it)
     # Include/Exclude types (see get_ids) to specify which are used for looking through paths.
     # Currently, all are included, just to be safe.
+
     id_replacements_path = {
         **IDS["ancestor-str"],
         **IDS["ancestor-str-dash"],
@@ -858,6 +949,8 @@ def main():
     }
     print(f'id_replacements_path = {ub.urepr(id_replacements_path, nl=1)}')
 
+    debug_staging_library('AFTER GET IDS', show_table=True)
+
     # To (mostly) reuse the same functions from step 1, the replacements dict needs to be updated with
     # id_replacements_path. It can't be replaced since it's also used to find the files (which uses the
     # same source -> target processing/conversion as step 1). In theory this alters the process since
@@ -865,13 +958,17 @@ def main():
     # since step 1 only processes the roots of the paths (which cannot be similar to anything in
     # id_replacements_path).
     for i, job in enumerate(TODO_LIST_ID_PATHS):
-        TODO_LIST_ID_PATHS[i]["replacements"] = id_replacements_path
+        TODO_LIST_ID_PATHS[i]["replacements"].update(id_replacements_path)
 
     # import ubelt as ub
     # print(f'IDS = {ub.urepr(IDS, nl=1)}')
 
     # Replace all paths with ids - both in the file system and within files.
     rich.print("[white]STEP 3.1 Replace all paths with ids.")
+    print(f'PATH_REPLACEMENTS={PATH_REPLACEMENTS}')
+
+    debug_staging_library('BEFORE REPLACE WITH IDS', show_table=True)
+
     staged_tasks = collect_files_to_process(
         TODO_LIST_ID_PATHS,
         process_func=process_file,
@@ -887,6 +984,8 @@ def main():
 
     # Replace remaining ids.
     rich.print("[white]STEP 3.2 Replace remaining ids.")
+    debug_staging_library('AFTER REPLACE WITH IDS', show_table=True)
+    # raise Exception
     staged_tasks = collect_files_to_process(
         TODO_LIST_IDS,
         process_func=partial(update_db_table_ids, IDS=IDS),
@@ -960,6 +1059,31 @@ def main():
     # accept_fpath = config.STAGING_ROOT / 'accept.sh'
     # accept_fpath.write_text(accept_text)
     # # accept_fpath.chmod('u+x')
+
+
+def debug_staging_library(name, show_table=True):
+    # from rich.markup import escape
+    import pandas as pd
+
+    orig_fpath = '/root/.local/share/jellyfin/data/library.db'
+    orig_fpath_shm = '/root/.local/share/jellyfin/data/library.db-shm'
+    orig_fpath_wal = '/root/.local/share/jellyfin/data/library.db-wal'
+
+    library_fpath = '/staging/staged-data/data/library.db'
+    print('-------')
+    rich.print(f'[red][DEBUG] {name}: {library_fpath}  - {ub.hash_file(library_fpath)}')
+    rich.print(f'[red][DEBUG] {name}: {orig_fpath}     - {ub.hash_file(orig_fpath)}')
+    rich.print(f'[red][DEBUG] {name}: {orig_fpath_shm} - {ub.hash_file(orig_fpath_shm)}')
+    rich.print(f'[red][DEBUG] {name}: {orig_fpath_wal} - {ub.hash_file(orig_fpath_wal)}')
+    if show_table:
+        con = sqlite3.connect(library_fpath)
+        with con:
+            # table_names = list(pd.read_sql_query("SELECT name FROM sqlite_master WHERE type='table';", con)['name'])
+            table_name = 'TypedBaseItems'
+            table = pd.read_sql_query(f"SELECT * FROM {table_name}", con)
+            print(table[['guid', 'Path']])
+        rich.print(f'[red][DEBUG]{name}: {library_fpath} - {ub.hash_file(library_fpath)}')
+    print('-------')
 
 if __name__ == "__main__":
     main()

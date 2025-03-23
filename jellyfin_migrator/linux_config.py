@@ -101,9 +101,13 @@ PATH_REPLACEMENTS = {
     # Self-explanatory, I guess. "\\" if migrating *to* Windows, "/" else.
     "target_path_slash": "/",
     # Paths to your libraries
-    "/media/tvshows": "/media/tvshows",
-    "/media/movies": "/media/movies",
-    "/media/music": "/media/music",
+    # "/media/tvshows": "/media/tvshows",
+    # "/media/movies": "/media/movies",
+    # "/media/music": "/media/music",
+
+    "/data/jellyfin/media": "/media",
+    "/root/.local/share/jellyfin": "/media",
+
     # Paths to the different parts of the jellyfin database. Determine these
     # by comparing your existing installation with the paths in your new
     # installation.
@@ -144,10 +148,12 @@ PATH_REPLACEMENTS = {
 FS_PATH_REPLACEMENTS = {
     "log_no_warnings": False,
     "target_path_slash": "/",
-    '/data/jellyfin/media': '/media',
+    # '/data/jellyfin/media': '/media',
+    '/media': '/data/jellyfin/media',
+    '/config': '/root/.local/share/jellyfin',
     # "/config": "/",
-    "%AppDataPath%": "/config/data",
-    "%MetadataPath%": "/config/metadata",
+    "%AppDataPath%": "/root/.local/share/jellyfin/data",
+    "%MetadataPath%": "/root/.local/share/jellyfin/metadata"
     # "/data/tvshows": "Y:/Serien",
     # "/data/movies": "Y:/Filme",
     # "/data/music": "Y:/Musik",
