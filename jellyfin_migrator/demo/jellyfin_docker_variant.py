@@ -4,18 +4,39 @@ from jellyfin_migrator.demo.demo_media import grab_demo_media
 from jellyfin_migrator.demo.jellyfin_init import configure_initial_server
 
 
-def ensure_docker_variant():
+def ensure_docker_variant(mounts=None):
     paths = grab_demo_media()
     media_dpath = paths['media']
     port = 8097
+
+    _mounts = [
+        {'source': media_dpath, 'target': '/media'}
+    ]
+    if mounts is not None:
+        _mounts.extend(mounts)
+
+    mount_args = []
+    for mount in _mounts:
+        source = mount['source']
+        target = mount['target']
+        mtype = mount.get('type', 'bind')
+        if mtype == 'bind':
+            mount_args.append('--mount')
+            mount_args.append(f'type={mtype},source={source},target={target}')
+        elif mtype == 'volume':
+            # mount_args.append(f'type={mtype},{source}:{target}')
+            mount_args.append('--volume')
+            mount_args.append(f'{source}:{target}')
+        else:
+            raise AssertionError
+
     engine = OCIContainerEngineConfig(
         "docker",
         disable_host_mount=True,
         create_args=(
             '--publish',
             f'{port}:8096/tcp',
-            '--mount',
-            f'type=bind,source={media_dpath},target=/media'
+            *mount_args
         )
     )
     self = OCIContainer(image='jellyfin/jellyfin',
@@ -27,8 +48,8 @@ def ensure_docker_variant():
         self.start()
         self.connect()
     else:
-        self.setup()
         import time
+        self.setup()
         # Query the container until it is ready
         while not self.status() == 'running':
             time.sleep(0.1)

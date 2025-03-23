@@ -52,12 +52,12 @@ class DockerVariant:
     """
     This is where things go on the official docker image
     """
-    config     = "/config"
+    config     = "/config/config"  # this is different than the original (extra /config), but maybe it is correct?
     cache      = "/config/cache"
     log        = "/config/log"
-    data       = "/config/data"
+    data       = "/config"  # TODO: change this name, it should probably not be called "data", maybe root.
     transcodes = "/config/data/transcodes"
-    ffmpeg     = "usr/lib/jellyfin-ffmpeg/ffmpeg"
+    ffmpeg     = "/usr/lib/jellyfin-ffmpeg/ffmpeg"  # also different from original (has /)
 
 
 class RootUserAptVariant:

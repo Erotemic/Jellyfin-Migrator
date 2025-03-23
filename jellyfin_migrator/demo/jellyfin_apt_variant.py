@@ -1,8 +1,7 @@
 import ubelt as ub
 from jellyfin_migrator.demo.oci_container import OCIContainer, OCIContainerEngineConfig
 from jellyfin_migrator.demo.demo_media import grab_demo_media
-from jellyfin_migrator.demo.jellyfin_init import configure_initial_server
-from jellyfin_migrator.demo.jellyfin_init import add_demo_media_libraries
+from jellyfin_migrator.demo.jellyfin_init import JellyfinInitializer
 from jellyfin_migrator.demo.jellyfin_init import is_server_alive, is_server_alive2
 
 
@@ -108,22 +107,27 @@ class JellyfinAptContainer(OCIContainer):
         return is_server_alive(self.port, verbose=0)
 
     def is_alive_fallback(self):
+        assert self.name is not None, 'container name should exist'
         running_procs = self.exec('ps -ax').stdout
         if '/usr/bin/jellyfin' in running_procs:
             return is_server_alive2(self.port)
 
     def _run_server(self):
         import time
+        assert self.name is not None, 'container name should exist'
         ub.cmd(f'docker exec --detach {self.name} /usr/bin/jellyfin --webdir=/usr/share/jellyfin/web --ffmpeg=/usr/lib/jellyfin-ffmpeg/ffmpeg')
         wait_time = 0
-        # Block until server is online
-        while not self.is_alive():
-            print('waiting')
-            time.sleep(0.1)
-            wait_time += 1
-            if wait_time > 10:
-                if self.is_alive_fallback():
-                    break
+
+        prog = ub.ProgIter(desc='waiting for server to respond...')
+        with prog:
+            # Block until server is online
+            while not self.is_alive():
+                prog.step()
+                time.sleep(0.1)
+                wait_time += 1
+                if wait_time > 20:
+                    if self.is_alive_fallback():
+                        break
 
     def setup_server(self):
         """
@@ -153,17 +157,28 @@ class JellyfinAptContainer(OCIContainer):
 
             apt update
             apt install jellyfin -y
+            ''')
 
+        DEV_GOODIES = True
+        if DEV_GOODIES:
+            setupscript_text += '\n' + ub.codeblock(
+                '''
+                apt install python3-pip --yes
+                apt install fd-find tree --yes
+                pip install pandas ubelt rich kwutil networkx
+                ''')
+
+        # TODO:
+        # maybe fix systemctl with
+        # https://stackoverflow.com/questions/46800594/start-service-using-systemctl-inside-docker-container
+        ub.codeblock(
+            '''
             # Use this to run jellyfin instead of systemctl
             #/usr/bin/jellyfin --webdir=/usr/share/jellyfin/web --ffmpeg=/usr/lib/jellyfin-ffmpeg/ffmpeg
             # Does not work because systemctl is not available in the container
             # systemctl start jellyfin
             # systemctl status jellyfin --no-pager
             ''')
-
-        # TODO:
-        # maybe fix systemctl with
-        # https://stackoverflow.com/questions/46800594/start-service-using-systemctl-inside-docker-container
 
         fpath = ub.Path.appdir('jellyfin/demo').ensuredir() / 'setup_apt_server.sh'
         fpath.write_text(setupscript_text)
@@ -175,16 +190,22 @@ class JellyfinAptContainer(OCIContainer):
         print('Starting the server')
         self._run_server()
 
-        # Initialize the server with a user/pass: jellyfin/jellyfin
+        # Initialize the server with a user/pass: jellyfin-user/jellyfin-pass
         print('Configuring server')
-        configure_initial_server(self.port)
+        initializer = JellyfinInitializer(port=self.port,
+                                          username='jellyfin-user',
+                                          password='jellyfin-pass')
+
+        initializer.configure_initial_server()
 
         # Add media for the server to manage
         print('Adding media libraries')
-        add_demo_media_libraries(self.port, media_dpath=self.internal_media_dpath)
+        initializer.add_demo_media_libraries(
+            media_dpath=self.internal_media_dpath
+        )
 
         if self.cached_image:
-            self.commit()
+            self.commit(self.cached_image)
 
     def save_cache(self):
         assert self.image == self.base_image

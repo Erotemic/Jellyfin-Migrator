@@ -191,13 +191,13 @@ class OCIContainer:
             pass
         return f"--platform={oci_platform.value}", f"--pull={pull}"
 
-    def engine_cmd(self, command, verbose=0, check=True):
+    def engine_cmd(self, command, verbose=0, check=True, system=False):
         """
         Call an engine command. (i.e. docker or podman) followed by whatever
         the command is.
         """
         command = _resolve_command(command, as_text=False)
-        info = ub.cmd([self.engine.name] + command, verbose=verbose, check=check)
+        info = ub.cmd([self.engine.name] + command, verbose=verbose, check=check, system=system)
         return info
 
     def exists(self):
@@ -222,6 +222,10 @@ class OCIContainer:
 
     def start(self):
         self.engine_cmd(["start", self.name], verbose=3)
+        self.connect()
+
+    def restart(self):
+        self.engine_cmd(["restart", self.name], verbose=3)
         self.connect()
 
     def create(self):
@@ -415,7 +419,7 @@ class OCIContainer:
 
         return [PurePosixPath(p) for p in path_strings]
 
-    def exec(self, command, cwd=None, verbose=0):
+    def exec(self, command, cwd=None, verbose=0, system=False, exec_args=None):
         """
         Variant of call that uses a separte process to execute a command.
 
@@ -423,10 +427,14 @@ class OCIContainer:
         stderr reporting, and we can capture with ubelt, the downside is
         that it requires a new popen process.
         """
+        assert self.name is not None, 'container name should exist'
+        assert command is not None, 'command should be given'
+        if exec_args is None:
+            exec_args = ''
         if cwd is None:
-            return self.engine_cmd(f'exec {self.name} {command}', verbose=verbose)
+            return self.engine_cmd(f'exec {exec_args} {self.name} {command}', verbose=verbose, system=system)
         else:
-            return self.engine_cmd(f'exec --workdir {cwd} {self.name} {command}', verbose=verbose)
+            return self.engine_cmd(f'exec {exec_args} --workdir {cwd} {self.name} {command}', verbose=verbose, system=system)
 
     def call(
         self,

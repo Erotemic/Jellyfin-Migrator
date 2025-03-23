@@ -72,6 +72,10 @@ IDS = dict()
 LOGGING_NEWLINE = False
 
 
+# from kwutil import util_logger  # NOQA
+# logger = util_logger.Logger(__name__).configure(logfile=LOG_FILE)
+
+
 def print_log(*args, **kwargs):
     global LOGGING_NEWLINE
     print(*args, **kwargs)
@@ -899,21 +903,58 @@ def main():
     d1 = {k: getattr(config.STAGING, k) for k in dir(config.STAGING) if not k.startswith('_')}
     d2 = {k: getattr(config.TARGET, k) for k in dir(config.STAGING) if not k.startswith('_')}
 
-    for k in d1.keys():
+    # Ensure we move directories in the right order
+    import networkx as nx
+    # Map destination paths to source paths
+    # path_mapping = {d2[k]: d1[k] for k in d1}
+    # Add nodes (only using destination paths)
+    G = nx.DiGraph()
+    for k, v in d2.items():
+        G.add_node(v, key=k)
+    G.add_nodes_from(d2.values())
+    for path1 in d2.values():
+        for path2 in d2.values():
+            if path1 != path2 and str(path2).startswith(str(path1)):
+                G.add_edge(path1, path2)  # path1 must be moved before path2
+    G = nx.transitive_reduction(G)
+    for k, v in d2.items():
+        G.nodes[v]['key'] = k
+    nx.write_network_text(G)
+
+    # Perform a topological sort
+    ordered_moves = [G.nodes[node]['key'] for node in nx.topological_sort(G)]
+
+    lines = []
+    for k in ordered_moves:
         v1 = d1[k]
         v2 = d2[k]
         path = ub.Path(v1)
-        rsync_src = '/'.join([str(Path(*path.parts[0:-1])), path.parts[-1]])
-        rsync_dst = ub.Path(v2)
-        print(f'test -e {v1} && rsync -avPR {rsync_src} {rsync_dst}')
-    """
-    test -e /staging/staged-cached && rsync -avPR /staging/staged-cached /config/cache
-    test -e /staging/staged-config && rsync -avPR /staging/staged-config /config
-    test -e /staging/staged-data && rsync -avPR /staging/staged-data /config/data
-    test -e /staging/staged-ffmpeg && rsync -avPR /staging/staged-ffmpeg usr/lib/jellyfin-ffmpeg/ffmpeg
-    test -e /staging/staged-log && rsync -avPR /staging/staged-log /config/log
-    test -e /staging/staged-transcodes && rsync -avPR /staging/staged-transcodes /config/data/transcodes
-    """
+        dst = ub.Path(v2)
+
+        # src = '/'.join([str(Path(*path.parts[0:-1])), path.parts[-1]])
+        src = path
+        # Trailing slash is crucial
+        line = (f'test -e {v1} && rsync -avPR {src}/ {dst}/')
+
+        # src = './' + path.name
+        # line = (f'test -e {src} && mv {src} {dst}')
+        lines.append(line)
+
+    accept_text = '\n'.join(lines)
+    # accept_text = ub.codeblock(
+    #     """
+    #     test -e /staging/staged-cached && rsync -avPR /staging/staged-cached /config/cache
+    #     test -e /staging/staged-config && rsync -avPR /staging/staged-config /config
+    #     test -e /staging/staged-data && rsync -avPR /staging/staged-data /config/data
+    #     test -e /staging/staged-ffmpeg && rsync -avPR /staging/staged-ffmpeg usr/lib/jellyfin-ffmpeg/ffmpeg
+    #     test -e /staging/staged-log && rsync -avPR /staging/staged-log /config/log
+    #     test -e /staging/staged-transcodes && rsync -avPR /staging/staged-transcodes /config/data/transcodes
+    #     """
+    # )
+    print(accept_text)
+    accept_fpath = config.STAGING_ROOT / 'accept.sh'
+    accept_fpath.write_text(accept_text)
+    # accept_fpath.chmod('u+x')
 
 if __name__ == "__main__":
     main()
