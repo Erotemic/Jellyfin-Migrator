@@ -4,7 +4,7 @@ from jellyfin_migrator.demo.demo_media import grab_demo_media
 from jellyfin_migrator.demo.jellyfin_init import configure_initial_server
 
 
-def ensure_docker_variant(mounts=None):
+def ensure_docker_variant(mounts=None, do_initial_configure=False):
     paths = grab_demo_media()
     media_dpath = paths['media']
     port = 8097
@@ -49,11 +49,13 @@ def ensure_docker_variant(mounts=None):
         self.connect()
     else:
         import time
-        self.setup()
+        self.create()
+        self.start()
         # Query the container until it is ready
         while not self.status() == 'running':
             time.sleep(0.1)
-        configure_initial_server(port)
+        if do_initial_configure:
+            configure_initial_server(port)
     return self
 
 

@@ -42,12 +42,53 @@ def main():
     # TODO: you might need to actually do something in the jellyfin server to
     # get it to populate jellyfin.db, otherwise maybe it is empty and this
     # fails?
+
+    port = self.port
+    username = 'jellyfin-user'
+    password = 'jellyfin-pass'
+    # Create a client to perform some initial configuration.
+    from jellyfin_apiclient_python import JellyfinClient
+    client = JellyfinClient()
+    url = 'http://localhost'
+    client.config.app(
+        name='DemoServerMediaPopulator',
+        version='0.1.0',
+        device_name='machine_name',
+        device_id='unique_id')
+    client.config.data["auth.ssl"] = True
+    url = f'{url}:{port}'
+    client.auth.connect_to_address(url)
+    client.auth.login(url, username, password)
+    client.jellyfin.get_users()
+    client.jellyfin.get_media_folders()
+    client.jellyfin.items()
+    client.jellyfin.get_recently_added()
+    client.jellyfin.new_user('other-user', 'other-password')
+    client.jellyfin.unpause_sync_play()
+    client.jellyfin.new_sync_play_v2('groupname')
+    item = client.jellyfin.search_media_items()['Items'][0]
+    client.jellyfin.refresh_item(item['Id'])
+    client.jellyfin.set_item_sync_play(item['Id'])
+    session = client.jellyfin.sessions()[0]
+    client.jellyfin.remote_play_media(session['Id'], [item['Id']])
+
+    # Re-running the server seems to do it?
+    apt_variant.exec('apt update')
+    apt_variant.exec('apt install psmisc sqlite3')
+    apt_variant.exec('killall /usr/bin/jellyfin')
+    apt_variant._run_server()
+
+    _ = self.exec('du /root/.local/share/jellyfin/data/jellyfin.db', verbose=3)
+
     _ = self.exec('python3 -m jellyfin_migrator', cwd='/Jellyfin-Migrator', verbose=3, system=True, exec_args='-it')
     _ = self.exec('ls', cwd='/staging', verbose=3)
 
     dpath = ub.Path.appdir('jellyfin-migrator').ensuredir()
     local_staging = (dpath / 'staging').delete()
     self.copy_out('staging', to_path=local_staging)
+
+    # TODO: ensure media paths have changed
+    # sqlite3 library.db "SELECT Path FROM TypedBaseItems;"
 
     # Now lets try to port
     from jellyfin_migrator.demo.jellyfin_docker_variant import ensure_docker_variant
@@ -58,20 +99,29 @@ def main():
             'target': '/config',
             'type': 'volume',
         }
-    ])
-    print(f'docker_variant.name={docker_variant.name}')
-    docker_variant.exec('rm -rf /staging')
-    docker_variant.copy_into(local_staging, '/staging')
-    docker_variant.exec('ls /', verbose=3)
-    docker_variant.exec('chmod +x /staging/accept.sh', verbose=3)
-    docker_variant.exec('apt update')
-    docker_variant.exec('apt install rsync sqlite3 --yes')
-    docker_variant.exec('cat /staging/accept.sh', verbose=3)
-    docker_variant.exec('sha1sum /staging/staged-data/data/jellyfin.db', verbose=3)
+    ], do_initial_configure=False)
+    docker_variant.exec('apt update', verbose=3)
+    docker_variant.exec('apt install rsync sqlite3 --yes', verbose=3)
+    docker_variant.exec('du /config/data/jellyfin.db', verbose=3)
     docker_variant.exec('sha1sum /config/data/jellyfin.db', verbose=3)
-    docker_variant.exec('ls -al /staging/staged-data/data/jellyfin.db', verbose=3)
-    docker_variant.exec('ls -al /config/data/jellyfin.db', verbose=3)
-    docker_variant.exec('sqlite3 /', verbose=3)
+    docker_variant.exec('sqlite3 /config/data/jellyfin.db -header -column "SELECT * FROM Users;"', verbose=3)
+
+    # print(f'docker_variant.name={docker_variant.name}')
+    # docker_variant.exec('rm -rf /staging')
+    # docker_variant.copy_into(local_staging, '/staging')
+    # docker_variant.exec('ls /', verbose=3)
+    # docker_variant.exec('chmod +x /staging/accept.sh', verbose=3)
+    # docker_variant.exec('cat /staging/accept.sh', verbose=3)
+    # docker_variant.exec('sha1sum /staging/staged-data/data/jellyfin.db', verbose=3)
+    # docker_variant.exec('sha1sum /config/data/jellyfin.db', verbose=3)
+    # docker_variant.exec('ls -al /staging/staged-data/data/jellyfin.db', verbose=3)
+    # docker_variant.exec('ls -al /config/data/jellyfin.db', verbose=3)
+    # docker_variant.exec('sqlite3 /', verbose=3)
+
+    # TODO:
+    # Ensure that we are expecting media to live in /media in the docker
+    # container instead of /data/jellyfin/media, which is where it lives
+    # outside of the docker container.
 
     # docker_variant.exec('./accept.sh', cwd='/staging', verbose=3)
     # print(f'apt_variant.name={apt_variant.name}')
@@ -79,6 +129,121 @@ def main():
     # Ok, this isn't working why?
     # We can't login. Are we not copying the user credentials over?
     # Let's check that first.
+
+
+def selenium_login():
+    from selenium import webdriver
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.chrome.service import Service
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+
+    from webdriver_manager.chrome import ChromeDriverManager
+    drive_fpath = ChromeDriverManager().install()
+
+    # Set up the Chrome WebDriver
+    service = Service(drive_fpath)  # Update this path
+    options = webdriver.ChromeOptions()
+    driver = webdriver.Chrome(service=service, options=options)
+
+    try:
+        # Open Jellyfin web UI
+        driver.get("http://localhost:8097/")
+
+        wait = WebDriverWait(driver, 5)
+
+        # Step 1: Check if "Connect to server" screen appears
+
+        EC.presence_of_element_located((By.CSS_SELECTOR, "input[placeholder='Enter server address']"))
+        try:
+            server_input = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[placeholder='Enter server address']")))
+            connect_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Connect')]")))
+            print("Entering server URL and clicking Connect")
+            server_input.clear()
+            server_input.send_keys("http://localhost:8097")
+            connect_button.click()
+        except Exception:
+            print("Server connection screen not detected, proceeding to login")
+
+        # Step 2: Check if the login screen appears
+        try:
+            username_input = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[autocomplete='username']")))
+            password_input = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password']")))
+            login_button = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button.button-submit")))
+            print("Entering login credentials")
+            username_input.clear()
+            username_input.send_keys("jellyfin-user")
+            password_input.clear()
+            password_input.send_keys("jellyfin-pass")
+            login_button.click()
+        except Exception:
+            print("Login screen not detected")
+
+        # Wait to observe the result
+        wait.until(EC.url_contains("home"))
+
+    finally:
+        ...
+        # input("Press Enter to close the browser...")  # Keep the browser open for review
+        # driver.quit()
+
+
+def grab_selenium_chromedriver(redownload=False):
+    r"""
+
+    pip install webdriver-manager
+
+
+    Automatically download selenium chrome driver if needed
+
+    CommandLine:
+        python -m utool.util_grabdata --test-grab_selenium_chromedriver:1
+
+    Example:
+        >>> # DISABLE_DOCTEST
+        >>> ut.grab_selenium_chromedriver()
+        >>> import selenium.webdriver
+        >>> driver = selenium.webdriver.Chrome()
+        >>> driver.get('http://www.google.com')
+        >>> search_field = driver.find_element_by_name('q')
+        >>> search_field.send_keys('puppies')
+        >>> search_field.send_keys(selenium.webdriver.common.keys.Keys.ENTER)
+
+    Example1:
+        >>> # DISABLE_DOCTEST
+        >>> import selenium.webdriver
+        >>> driver = selenium.webdriver.Firefox()
+        >>> driver.get('http://www.google.com')
+        >>> search_field = driver.find_element_by_name('q')
+        >>> search_field.send_keys('puppies')
+        >>> search_field.send_keys(selenium.webdriver.common.keys.Keys.ENTER)
+    """
+    import utool as ub
+    import os
+    import stat
+    from os.path import join
+    # TODO: use a better download dir (but it must be in the PATh or selenium freaks out)
+    chromedriver_dpath = ut.ensuredir(ut.truepath('~/bin'))
+    chromedriver_fpath = join(chromedriver_dpath, 'chromedriver')
+    if not ut.checkpath(chromedriver_fpath) or redownload:
+        assert chromedriver_dpath in os.environ['PATH'].split(os.pathsep)
+        # TODO: make this work for windows as well
+        if ut.LINUX and ut.util_cplat.is64bit_python():
+            import requests
+            rsp = requests.get('http://chromedriver.storage.googleapis.com/LATEST_RELEASE', timeout=TIMEOUT)
+            assert rsp.status_code == 200
+            url = 'http://chromedriver.storage.googleapis.com/' + rsp.text.strip() + '/chromedriver_linux64.zip'
+            ub.grab_zipped_url(url, download_dir=chromedriver_dpath, redownload=True)
+        else:
+            raise AssertionError('unsupported chrome driver getter script')
+        if not ut.WIN32:
+            st = os.stat(chromedriver_fpath)
+            os.chmod(chromedriver_fpath, st.st_mode | stat.S_IEXEC)
+    ut.assert_exists(chromedriver_fpath)
+    os.environ['webdriver.chrome.driver'] = chromedriver_fpath
+    return chromedriver_fpath
+
+
 
 if __name__ == '__main__':
     """

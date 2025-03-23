@@ -144,10 +144,10 @@ PATH_REPLACEMENTS = {
 FS_PATH_REPLACEMENTS = {
     "log_no_warnings": False,
     "target_path_slash": "/",
-    # '/data/jellyfin/media': '/new_media',
+    '/data/jellyfin/media': '/media',
     # "/config": "/",
-    "%AppDataPath%": "/data/data",
-    "%MetadataPath%": "/data/metadata",
+    "%AppDataPath%": "/config/data",
+    "%MetadataPath%": "/config/metadata",
     # "/data/tvshows": "Y:/Serien",
     # "/data/movies": "Y:/Filme",
     # "/data/music": "Y:/Musik",
@@ -198,7 +198,7 @@ class TARGET:
 
 
 class STAGING:
-    config = STAGING_ROOT / 'staged-config'
+    config = STAGING_ROOT / 'staged-data/config'  # hack
     cache = STAGING_ROOT / 'staged-cached'
     log = STAGING_ROOT / 'staged-log'
     data = STAGING_ROOT / 'staged-data'
