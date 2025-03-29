@@ -33,14 +33,13 @@ def main():
     self.connect()
     self.call(['python3', '--version'])
     # Run the migrator (with exec for stderr)
-    _ = self.exec('apt update', cwd='/Jellyfin-Migrator', verbose=3)
-    _ = self.exec('apt install python3-pip fd-find tree  --yes', cwd='/Jellyfin-Migrator', verbose=3)
-    _ = self.exec('pip install pandas ubelt rich kwutil networkx', cwd='/Jellyfin-Migrator', verbose=3)
+    _ = self.exec('apt update', verbose=3)
+    _ = self.exec('apt install python3-pip fd-find tree  --yes', verbose=3)
+    _ = self.exec('pip install pandas ubelt rich kwutil networkx', verbose=3)
 
     # TODO: you might need to actually do something in the jellyfin server to
     # get it to populate jellyfin.db, otherwise maybe it is empty and this
     # fails?
-
     port = self.port
     username = 'jellyfin-user'
     password = 'jellyfin-pass'
@@ -65,8 +64,6 @@ def main():
 
     client.jellyfin.new_user('other-user', 'other-password')
 
-    client.jellyfin.new_sync_play_v2('groupname')
-
     items = client.jellyfin.search_media_items()['Items']
     # Set two items as a favorite
     for item in items:
@@ -75,27 +72,29 @@ def main():
         if 'Clair De Lune' in item['Name']:
             client.jellyfin.favorite(item['Id'])
 
-    # session = client.jellyfin.sessions()[0]
-    # client.jellyfin.remote_play_media(session['Id'], [item['Id']])
-
-    # Re-running the server seems to do it?
+    # Re-running the server seems to populate jellyfin.db correctly.
     apt_variant.exec('apt update')
     apt_variant.exec('apt install psmisc sqlite3')
     apt_variant.exec('killall /usr/bin/jellyfin')
     apt_variant._run_server()
 
+    # Verify that jellyfin.db has data in it
+    _ = self.exec('du /root/.local/share/jellyfin/data/jellyfin.db', verbose=3)
+    _ = self.exec('ls -al /root/.local/share/jellyfin/data/jellyfin.db', verbose=3)
+
     USER_INTERACTIVE = True
     if USER_INTERACTIVE:
         selenium_login("http://localhost:8098/")
-
-    _ = self.exec('du /root/.local/share/jellyfin/data/jellyfin.db', verbose=3)
-    _ = self.exec('ls -al /root/.local/share/jellyfin/data/jellyfin.db', verbose=3)
 
     # Delete any previous migration data.
     self.call(['rm', '-rf', '/staging'])
     self.start()
     self.connect()
     self.call(['python3', '--version'])
+
+    if 0:
+        # RUN LEGACY MIGRATION
+        _ = self.exec('python3 jellyfin_migrator/orig.py', cwd='/Jellyfin-Migrator', verbose=3, system=True, exec_args='-it')
 
     # RUN MIGRATION
     _ = self.exec('python3 -m jellyfin_migrator', cwd='/Jellyfin-Migrator', verbose=3, system=True, exec_args='-it')

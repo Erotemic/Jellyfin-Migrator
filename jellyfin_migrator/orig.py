@@ -246,7 +246,8 @@ def get_id_candidates(s):
 #   * Go to "Search -> Bookmark -> Remove Bookmarked Lines"
 #   * Repeat as needed
 # Text encoding is UTF-8 (in npp selectable under "Encoding -> UTF-8")
-log_file = "D:/jf-migrator.log"
+# log_file = "D:/jf-migrator.log"
+log_file = "./jf-migrator-orig.log"
 
 
 # These paths will be processed in the order they're listed here.
@@ -266,20 +267,31 @@ log_file = "D:/jf-migrator.log"
 path_replacements = {
     # Self-explanatory, I guess. "\\" if migrating *to* Windows, "/" else.
     "target_path_slash": "/",
+
     # Paths to your libraries
-    "D:/Serien": "/data/tvshows",
-    "F:/Serien": "/data/tvshows",
-    "F:/Filme": "/data/movies",
-    "F:/Musik": "/data/music",
+    # "D:/Serien": "/data/tvshows",
+    # "F:/Serien": "/data/tvshows",
+    # "F:/Filme": "/data/movies",
+    # "F:/Musik": "/data/music",
+    '/data/jellyfin/media/music': '/media/music',
+    '/data/jellyfin/media/movies': '/media/movies',
+
     # Paths to the different parts of the jellyfin database. Determine these
     # by comparing your existing installation with the paths in your new
     # installation.
-    "C:/ProgramData/Jellyfin/Server/config": "/config",
-    "C:/ProgramData/Jellyfin/Server/cache": "/config/cache",
-    "C:/ProgramData/Jellyfin/Server/log": "/config/log",
-    "C:/ProgramData/Jellyfin/Server": "/config/data", # everything else: metadata, plugins, ...
-    "C:/ProgramData/Jellyfin/Server/transcodes": "/config/data/transcodes",
-    "C:/Program Files/Jellyfin/Server/ffmpeg.exe": "usr/lib/jellyfin-ffmpeg/ffmpeg",
+    # "C:/ProgramData/Jellyfin/Server/config": "/config",
+    # "C:/ProgramData/Jellyfin/Server/cache": "/config/cache",
+    # "C:/ProgramData/Jellyfin/Server/log": "/config/log",
+    # "C:/ProgramData/Jellyfin/Server": "/config/data", # everything else: metadata, plugins, ...
+    # "C:/ProgramData/Jellyfin/Server/transcodes": "/config/data/transcodes",
+    # "C:/Program Files/Jellyfin/Server/ffmpeg.exe": "usr/lib/jellyfin-ffmpeg/ffmpeg",
+    "/root/.config/jellyfin": "/config",
+    "/root/.cache/jellyfin": "/config/cache",
+    "/root/.local/share/jellyfin/log": "/config/log",
+    "/root/.local/share/jellyfin": "/config/data",  # everything else: metadata, plugins, ...
+    "/root/.cache/jellyfin/transcodes": "/config/data/transcodes",
+    "/usr/lib/jellyfin-ffmpeg/ffmpeg": "usr/lib/jellyfin-ffmpeg/ffmpeg",
+
     "%MetadataPath%": "%MetadataPath%",
     "%AppDataPath%": "%AppDataPath%",
 }
@@ -308,12 +320,15 @@ path_replacements = {
 fs_path_replacements = {
     "log_no_warnings": False,
     "target_path_slash": "/",
-    "/config": "/",
+    # "/config": "/",
     "%AppDataPath%": "/data/data",
     "%MetadataPath%": "/data/metadata",
-    "/data/tvshows": "Y:/Serien",
-    "/data/movies": "Y:/Filme",
-    "/data/music": "Y:/Musik",
+
+    # "/data/tvshows": "Y:/Serien",
+    # "/data/movies": "Y:/Filme",
+    # "/data/music": "Y:/Musik",
+    '/media': '/data/jellyfin/media',
+    '/config': '/root/.local/share/jellyfin',
 }
 
 
@@ -324,9 +339,13 @@ fs_path_replacements = {
 # and then do the replacement according to the path_replacements dict.
 # This is required if you copied your jellyfin DB to another location and then
 # start processing it with this script.
-original_root = Path("C:/ProgramData/Jellyfin/Server")
-source_root = Path("D:/Jellyfin/Server")
-target_root = Path("D:/Jellyfin-dummy")
+# original_root = Path("C:/ProgramData/Jellyfin/Server")
+# source_root = Path("D:/Jellyfin/Server")
+# target_root = Path("D:/Jellyfin-dummy")
+
+original_root = Path('/root/.local/share/jellyfin')
+source_root = Path('/root/.local/share/jellyfin')
+target_root = Path('/Jellyfin-dummy')
 
 
 ### The To-Do Lists: todo_list_paths, todo_list_id_paths and todo_list_ids.
