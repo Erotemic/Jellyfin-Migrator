@@ -49,15 +49,6 @@ except ImportError:
     raise
 
 LOG_FILE = config.LOG_FILE
-PATH_REPLACEMENTS = config.PATH_REPLACEMENTS
-FS_PATH_REPLACEMENTS = config.FS_PATH_REPLACEMENTS
-ORIGINAL_ROOT = config.ORIGINAL_ROOT
-TODO_LIST_ID_PATHS = config.TODO_LIST_ID_PATHS
-TODO_LIST_IDS = config.TODO_LIST_IDS
-
-
-# Similarly, the IDs are used in "hard-to-reach" places and are thus global, too.
-IDS = dict()
 
 
 # Custom print function that prints to both the console as well as to a log file
@@ -797,7 +788,7 @@ def get_ids(LIBRARY_DB_STAGING_PATH, LIBRARY_DB_SOURCE_PATH, target_data_path):
     return IDS
 
 
-def update_file_dates(LIBRARY_DB_STAGING_PATH, seen_tasks):
+def update_file_dates(LIBRARY_DB_STAGING_PATH, FS_PATH_REPLACEMENTS, seen_tasks):
     print_log("Updating file dates... Note: Reading file dates seems to be quite slow. "
               "This will take a couple minutes")
 
@@ -937,6 +928,7 @@ def main():
 
     seen_tasks = []
 
+    PATH_REPLACEMENTS = config.PATH_REPLACEMENTS
     staged_tasks1 = collect_files_to_process(
         config.TODO_LIST_PATHS_1,
         process_func=process_file,
@@ -998,6 +990,7 @@ def main():
     # the dict used to convert from source -> target is different, in reality, this is not an issue,
     # since step 1 only processes the roots of the paths (which cannot be similar to anything in
     # id_replacements_path).
+    TODO_LIST_ID_PATHS = config.TODO_LIST_ID_PATHS
     for i, job in enumerate(TODO_LIST_ID_PATHS):
         TODO_LIST_ID_PATHS[i]["replacements"].update(id_replacements_path)
 
@@ -1028,7 +1021,7 @@ def main():
     # debug_staging_library('AFTER REPLACE WITH IDS', show_table=True)
     # raise Exception
     staged_tasks = collect_files_to_process(
-        TODO_LIST_IDS,
+        config.TODO_LIST_IDS,
         process_func=partial(update_db_table_ids, IDS=IDS),
         replace_func=None,
         path_replacements=PATH_REPLACEMENTS,
@@ -1039,7 +1032,8 @@ def main():
 
     # Finally, update the file dates in the db.
     rich.print("[white]STEP 4. Update the file dates.")
-    update_file_dates(LIBRARY_DB_STAGING_PATH, seen_tasks)
+    FS_PATH_REPLACEMENTS = config.FS_PATH_REPLACEMENTS
+    update_file_dates(LIBRARY_DB_STAGING_PATH, FS_PATH_REPLACEMENTS, seen_tasks)
 
     print_log("")
     rich.print("[green]Jellyfin Database Migration complete.")

@@ -105,8 +105,9 @@ PATH_REPLACEMENTS = {
     # "/media/movies": "/media/movies",
     # "/media/music": "/media/music",
 
+    # HACKED IN
     "/data/jellyfin/media": "/media",
-    "/root/.local/share/jellyfin": "/media",
+    # "/root/.local/share/jellyfin": "/media",
 
     # Paths to the different parts of the jellyfin database. Determine these
     # by comparing your existing installation with the paths in your new
@@ -148,9 +149,14 @@ PATH_REPLACEMENTS = {
 FS_PATH_REPLACEMENTS = {
     "log_no_warnings": False,
     "target_path_slash": "/",
+
+    # HACKED IN
     # '/data/jellyfin/media': '/media',
     '/media': '/data/jellyfin/media',
-    '/config': '/root/.local/share/jellyfin',
+
+    # '/config': '/root/.local/share/jellyfin',
+    _D.data: _S.data,
+
     # "/config": "/",
     "%AppDataPath%": "/root/.local/share/jellyfin/data",
     "%MetadataPath%": "/root/.local/share/jellyfin/metadata"

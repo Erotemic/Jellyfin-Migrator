@@ -96,7 +96,7 @@ def main():
     _ = self.exec('du /root/.local/share/jellyfin/data/jellyfin.db', verbose=3)
     _ = self.exec('ls -al /root/.local/share/jellyfin/data/jellyfin.db', verbose=3)
 
-    USER_INTERACTIVE = True
+    USER_INTERACTIVE = 0
     if USER_INTERACTIVE:
         selenium_login("http://localhost:8098/")
 
@@ -104,12 +104,6 @@ def main():
     self.start()
     self.connect()
     self.call(['python3', '--version'])
-
-    if 0:
-        # RUN LEGACY MIGRATION
-        _ = self.exec('rm -rf /jellyfin-copy', verbose=3, system=True, exec_args='-it')
-        _ = self.exec('cp -r /root/.local/share/jellyfin /jellyfin-copy', verbose=3, system=True, exec_args='-it')
-        _ = self.exec('python3 jellyfin_migrator/orig.py', cwd='/Jellyfin-Migrator', verbose=3, system=True, exec_args='-it')
 
     # RUN MIGRATION
     self.call(['rm', '-rf', '/staging'])
@@ -173,11 +167,11 @@ def main():
     docker_variant.exec('apt update', verbose=3)
     docker_variant.exec('apt install rsync sqlite3 python3 python3-pip --yes', verbose=3)
     docker_variant.exec('python3 -m pip install --break-system-packages pandas ubelt rich kwutil networkx scriptconfig xmltodict', verbose=3)
-    docker_variant.exec('du /config/data/jellyfin.db', verbose=3)
-    docker_variant.exec('sha1sum /config/data/jellyfin.db', verbose=3)
-    docker_variant.exec('sha1sum /config/data/library.db', verbose=3)
-    docker_variant.exec('sqlite3 /config/data/library.db "SELECT Path FROM TypedBaseItems;"', verbose=3)
-    docker_variant.exec('sqlite3 /config/data/jellyfin.db -header -column "SELECT * FROM Users;"', verbose=3)
+    # docker_variant.exec('du /config/data/jellyfin.db', verbose=3)
+    # docker_variant.exec('sha1sum /config/data/jellyfin.db', verbose=3)
+    # docker_variant.exec('sha1sum /config/data/library.db', verbose=3)
+    # docker_variant.exec('sqlite3 /config/data/library.db "SELECT Path FROM TypedBaseItems;"', verbose=3)
+    # docker_variant.exec('sqlite3 /config/data/jellyfin.db -header -column "SELECT * FROM Users;"', verbose=3)
     import ubelt as ub
 
     # Create a client to perform some initial configuration.
@@ -198,8 +192,16 @@ def main():
     client.auth.login(url, username, password)
     items = client.jellyfin.search_media_items()['Items']
     print(f'items = {ub.urepr(items, nl=1)}')
+    assert len(items) == 7
+    for item in items:
+        if 'Popeye' in item['Name']:
+            assert item['UserData']['IsFavorite']
+        elif 'Clair De Lune' in item['Name']:
+            assert item['UserData']['IsFavorite']
+        else:
+            assert not item['UserData']['IsFavorite']
 
-    USER_INTERACTIVE = True
+    USER_INTERACTIVE = 0
     if USER_INTERACTIVE:
         selenium_login("http://localhost:8097/")
 
