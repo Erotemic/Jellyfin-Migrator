@@ -238,7 +238,9 @@ class STAGING:
 #   3.2 seems like only certain .db files contain them.
 #   Search for "ID types occurring in paths" to find the place in the code
 #   where you can select the types to include.
-TODO_LIST_PATHS = [
+
+# New: only the database files first.
+TODO_LIST_PATHS_1 = [
     {
         "source": SOURCE.data / "data/library.db",
         "source_root": SOURCE.data,
@@ -299,7 +301,9 @@ TODO_LIST_PATHS = [
         "copy_only": True,
         "no_log": False,
     },
+]
 
+TODO_LIST_PATHS_2 = [
     {
         "source": SOURCE.data / "plugins/**/*.json",
         "source_root": SOURCE.data,

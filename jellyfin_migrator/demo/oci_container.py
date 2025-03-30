@@ -166,6 +166,8 @@ class OCIContainer:
         self.name: str | None = name
         self.engine = engine
 
+        self.bash_stdin = None
+
     def _get_platform_args(self, *, oci_platform: OCIPlatform | None = None) -> tuple[str, str]:
         if oci_platform is None:
             oci_platform = self.oci_platform
@@ -341,6 +343,9 @@ class OCIContainer:
         self.remove(volumes=True, force=True)
 
     def stop(self):
+        if self.bash_stdin is None:
+            return self.engine_cmd(f'stop {self.name}')
+
         self.bash_stdin.write(b"exit 0\n")
         self.bash_stdin.flush()
         self.process.wait(timeout=30)
@@ -383,7 +388,7 @@ class OCIContainer:
             options.append('--link')
         if volumes:
             options.append('--volumes')
-        ub.cmd(
+        return ub.cmd(
             [self.engine.name, "rm", *options, "-v", self.name],
             # stdout=subprocess.DEVNULL,
             check=False,

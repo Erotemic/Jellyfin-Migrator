@@ -52,15 +52,8 @@ LOG_FILE = config.LOG_FILE
 PATH_REPLACEMENTS = config.PATH_REPLACEMENTS
 FS_PATH_REPLACEMENTS = config.FS_PATH_REPLACEMENTS
 ORIGINAL_ROOT = config.ORIGINAL_ROOT
-TODO_LIST_PATHS = config.TODO_LIST_PATHS
 TODO_LIST_ID_PATHS = config.TODO_LIST_ID_PATHS
 TODO_LIST_IDS = config.TODO_LIST_IDS
-
-
-# Since library.db will be needed throughout the process, its location is stored
-# here once it's been moved and updated with the new paths.
-LIBRARY_DB_STAGING_PATH = Path()
-LIBRARY_DB_SOURCE_PATH = Path()
 
 
 # Similarly, the IDs are used in "hard-to-reach" places and are thus global, too.
@@ -113,7 +106,7 @@ def update_db_table(
 
     # Initialize sqlite3 objects
     rich.print(f'[green]update_db_table, Connect to: file={file}')
-    rich.print(f'replace_dict = {ub.urepr(replace_dict, nl=1)}')
+    # rich.print(f'replace_dict = {ub.urepr(replace_dict, nl=1)}')
     con = sqlite3.connect(file)
     with con:
         cur = con.cursor()
@@ -231,12 +224,15 @@ def update_db_table(
                     if not img_properties:
                         continue
                     img_properties = img_properties.split("*")
+                    # print(f'old img_properties={img_properties}')
+                    # print(f'replace_dict={replace_dict}')
                     # path = first property
                     img_properties[0], mo, ig, wnrs = replace_func(img_properties[0], replace_dict)
                     if wrns:
                         rich.print('[yellow]WARNING3')
                     for warning in wrns:
                         print_log(warning)
+                    # print(f'new img_properties={img_properties}')
                     imgs[j] = "*".join(img_properties)
                     modified += mo
                     ignored  += ig
@@ -250,13 +246,13 @@ def update_db_table(
             # print(f'new_rowdata = {ub.urepr(new_rowdata, nl=1)}')
 
             new_rowdata = {k.lower(): v for k, v in new_rowdata.items()}
-            if 'path' in old_rowdata:
-                if old_rowdata['path'] == '/data/jellyfin/media/music/Clair_de_Lune_-_Wright_Brass_-_United_States_Air_Force_Band_of_Flight.mp3':
-                    print(f'old_rowdata = {ub.urepr(old_rowdata, nl=1)}')
-                    print(f'new_rowdata = {ub.urepr(new_rowdata, nl=1)}')
-            if 'path' in new_rowdata:
-                if new_rowdata['path'] == '/data/jellyfin/media/music/Clair_de_Lune_-_Wright_Brass_-_United_States_Air_Force_Band_of_Flight.mp3':
-                    raise Exception
+            # if 'path' in old_rowdata:
+            #     if old_rowdata['path'] == '/data/jellyfin/media/music/Clair_de_Lune_-_Wright_Brass_-_United_States_Air_Force_Band_of_Flight.mp3':
+            #         print(f'old_rowdata = {ub.urepr(old_rowdata, nl=1)}')
+            #         print(f'new_rowdata = {ub.urepr(new_rowdata, nl=1)}')
+            # if 'path' in new_rowdata:
+            #     if new_rowdata['path'] == '/data/jellyfin/media/music/Clair_de_Lune_-_Wright_Brass_-_United_States_Air_Force_Band_of_Flight.mp3':
+            #         raise Exception
             if 'path' not in new_rowdata:
                 if old_rowdata['path'] is not None:
                     raise AssertionError('UNCHANGED PATH')
@@ -369,7 +365,14 @@ def resolve_target(
         relpath = source.relative_to(source_root)
         original_source = original_root / relpath
         original = original_source
-        staging = staging_root / relpath
+
+        # new_relpath, _, _, _ = nested_root_path_replacer(relpath, to_replace=replacements)
+
+        # Sometimes moving a path needs to move to a new location because the
+        # path contains part of the id and this handles that.
+        new_relpath, *_ = nested_id_path_replacer(relpath, replacements)
+
+        staging = staging_root / new_relpath
         # target_v1, idgaf1, idgaf2, wrns1 = nested_root_path_replacer(original_source, to_replace=replacements)
         # target_v2, idgaf1, idgaf2, wrns2 = nested_root_path_replacer(target_v1, to_replace=FS_PATH_REPLACEMENTS)
         # for warning in wrns1 + wrns2:
@@ -385,7 +388,7 @@ def resolve_target(
         # # Otherwise the line below will make target relative to the _root_ of target_root
         # # instead of relative to target_root.
         # target = target.relative_to("/")
-        target = target_root / relpath
+        target = target_root / new_relpath
 
         if 0:
             print('Resolving Target')
@@ -398,6 +401,7 @@ def resolve_target(
             print(f'source   = {source}')
             print(f'staging  = {staging}')
             print(f'target   = {target}')
+
     else:
         raise AssertionError('not handled')
 
@@ -554,23 +558,16 @@ def process_file(
         print_log("Copy only")
         return
     elif staging.suffix == ".db":
-        # If it's "library.db", save it for later (see comment at declaration):
-        debug_staging_library('PROCESS_FILE-BEFORE')
-        if staging.name == "library.db":
-            # TODO: WE REALLY NEED TO GET RID OF GLOBALS!
-            global LIBRARY_DB_SOURCE_PATH, LIBRARY_DB_STAGING_PATH
-            LIBRARY_DB_SOURCE_PATH = source
-            LIBRARY_DB_STAGING_PATH = staging
-            rich.print(f'[yellow]!!!CHANGE GLOBAL: {LIBRARY_DB_SOURCE_PATH=}, {LIBRARY_DB_STAGING_PATH=}')
+        # debug_staging_library('PROCESS_FILE-BEFORE')
         # sqlite file. In this case table specifies which tables within that file have columns to check.
         # Iterate over those.
         for table, kwargs in tables.items():
             print_log("Processing table", table)
-            # The remaining function arguments (**kwards) contain the details about the columns to process.
+            # The remaining function arguments (**kwargs) contain the details about the columns to process.
             # See update_db_table and/or the todo_list.
             # JON FIXME: the replacements dict probably needs to be wrt to staging, previously wrt to target
             update_db_table(file=staging, replace_dict=replacements, replace_func=replace_func, table=table, **kwargs)
-        debug_staging_library('PROCESS_FILE-AFTER')
+        # debug_staging_library('PROCESS_FILE-AFTER')
     elif staging.suffix == ".xml" or staging.suffix == ".nfo":
         update_xml(file=staging, replace_dict=replacements, replace_func=replace_func)
     elif staging.suffix == ".mblink":
@@ -634,9 +631,6 @@ def update_db_table_ids(
     OLD COMMENT:
         Note: kwargs is due to how process_files works. It passes a lot of stuff from the
         job list that's not needed here.
-
-    MY COMMENT:
-        NO! Bad! DO IT BETTER! GFAGFGAJK!@!!!
     """
     if not os.path.exists(staging):
         print_log(f"Database staging={staging} does not exist, skipping")
@@ -644,6 +638,7 @@ def update_db_table_ids(
 
     print_log("Updating Item IDs in database... ")
     assert IDS is not None
+    # debug_staging_library('Before Update IDS', show_table=True)
 
     # Initialize sqlite3 objects
     con = sqlite3.connect(staging)
@@ -655,6 +650,8 @@ def update_db_table_ids(
         # multiprocessing and more advanced sqlite queries.
         for table, columns_by_id_type in tables.items():
             for id_type, columns in columns_by_id_type.items():
+                typed_id_mapper = IDS[id_type]
+
                 for column in columns:
                     print_log(f"Updating {column} IDs in table {table}...")
                     # See comment about iterating over rows while modifying them in update_db_table.
@@ -663,6 +660,9 @@ def update_db_table_ids(
                     except sqlite3.OperationalError:
                         print_log(f'ERROR: selecting distinct row from table={table} column={column} in {staging}')
                         raise
+
+                    rows_updated = 0
+                    rows_skipped = 0
 
                     progress = 0
                     rowcount = len(rows)
@@ -674,8 +674,8 @@ def update_db_table_ids(
                         if now - t > 1:
                             print_log(f"Progress: {progress} / {rowcount} rows")
                             t = now
-                        if old_id in IDS[id_type]:
-                            new_id = IDS[id_type][old_id]
+                        if old_id in typed_id_mapper:
+                            new_id = typed_id_mapper[old_id]
                             try:
                                 cur.execute(f"UPDATE `{table}` SET `{column}` = ? WHERE `{column}` = ?", (new_id, old_id))
                             except sqlite3.IntegrityError:
@@ -687,26 +687,36 @@ def update_db_table_ids(
                                     print_log(f"Deleting ({i + 1}/{len(rows)}): ", row)
                                 cur.execute(f"DELETE FROM `{table}` WHERE `{column}` = ?", (old_id,))
                             updated_ids_count += 1
+                            rows_updated += 1
+                        else:
+                            rows_skipped += 1
+                    # if table == 'TypedBaseItems' and column == 'guid':
+                    #     debug = [r for r in cur.execute(f"SELECT DISTINCT `{column}`,`Path` from `{table}`")]
+                    #     print(f'debug = {ub.urepr(debug, nl=1)}')
+                    #     print('update/skip', rows_updated, rows_skipped)
+                    #     import xdev
+                    #     xdev.embed()
+                    #     import sys
+                    #     sys.exit(1)
 
         # Write the updated database back to the file.
         con.commit()
         con.execute("PRAGMA wal_checkpoint(FULL);")  # Flush WAL changes to main database
         con.commit()
 
+    # debug_staging_library('After WAL', show_table=True)
     print_log(f"{updated_ids_count} IDs updated.")
 
 
-def get_ids(LIBRARY_DB_STAGING_PATH):
+def get_ids(LIBRARY_DB_STAGING_PATH, LIBRARY_DB_SOURCE_PATH, target_data_path):
     rich.print(f'[green] Connect to LIBRARY_DB_STAGING_PATH={LIBRARY_DB_STAGING_PATH}')
 
-    # Weird, for some reason read only mode causes an issue here. ChatGPT says
-    # it might be because of the WAL (Write-Ahead Logging) files, because we
-    # have a library.db-shm and library.db-wal file.
+    staging_uri = 'file:' + str(LIBRARY_DB_STAGING_PATH) + '?mode=ro&immutable=1'
+    assert os.path.exists(LIBRARY_DB_STAGING_PATH)
+    con = sqlite3.connect(staging_uri, uri=True)
 
-    uri = 'file:' + str(LIBRARY_DB_STAGING_PATH) + '?mode=ro'
-    assert not os.path.exists(uri)
-    con = sqlite3.connect(uri, uri=True)
-    assert not os.path.exists(uri)
+    target_data_path = os.fspath(target_data_path)
+
     # temp_path = ub.Path(LIBRARY_DB_STAGING_PATH).augment(stemsuffix='tmp')
     # ub.Path(LIBRARY_DB_STAGING_PATH).copy(temp_path, overwrite=True)
     # con = sqlite3.connect(str(temp_path))
@@ -715,7 +725,12 @@ def get_ids(LIBRARY_DB_STAGING_PATH):
 
         id_replacements_bin = dict()
         for guid, item_type, path in cur.execute("SELECT `guid`, `type`, `Path` FROM `TypedBaseItems`"):
+            # print(f'COMPUTE REPLACEMENT GUID FOR: path={path}')
+            if path.startswith(target_data_path):
+                # HACK
+                continue
             if not path or path.startswith("%"):
+                # print('SKIP')
                 continue
 
             # Source: https://github.com/jellyfin/jellyfin/blob/7e8428e588b3f0a0574da44081098c64fe1a47d7/Emby.Server.Implementations/Library/LibraryManager.cs#L504 # noqa
@@ -723,6 +738,7 @@ def get_ids(LIBRARY_DB_STAGING_PATH):
             # Omit IDs that haven't changed at all. Happens if not _all_ paths are modified
             if new_guid != guid:
                 id_replacements_bin[guid] = new_guid
+                # print(f'OLD {guid.hex()}, NEW={new_guid.hex()}')
 
         ### Adapted from id_scanner
         id_replacements_str               = {bid2sid(k): bid2sid(v) for k, v in id_replacements_bin.items()}
@@ -761,7 +777,8 @@ def get_ids(LIBRARY_DB_STAGING_PATH):
             duplicates_new = [next(cur.execute("SELECT `guid`, `Path` FROM `TypedBaseItems` WHERE `guid` = ?", (guid,))) for guid in old_ids]
 
             # also fetch the old paths for better understanding/debugging
-            src_con = sqlite3.connect(LIBRARY_DB_SOURCE_PATH + '?mode=ro', uri=True)
+            src_uri = 'file:' + str(LIBRARY_DB_SOURCE_PATH) + '?mode=ro&immutable=1'
+            src_con = sqlite3.connect(src_uri, uri=True)
             with src_con:
                 cur = src_con.cursor()
                 duplicates_old = [next(cur.execute("SELECT `guid`, `Path` FROM `TypedBaseItems` WHERE `guid` = ?", (guid,))) for guid in old_ids]
@@ -897,7 +914,7 @@ def execute_tasks(staged_tasks):
                      original=original, tables=tables,
                      **process_kwargs)
     rich.print('[blue]Finished Tasks')
-    debug_staging_library('AFTER EXCUTE TASKS', show_table=True)
+    # debug_staging_library('AFTER EXCUTE TASKS', show_table=True)
 
 
 def main():
@@ -920,22 +937,32 @@ def main():
 
     seen_tasks = []
 
-    staged_tasks = collect_files_to_process(
-        TODO_LIST_PATHS,
+    staged_tasks1 = collect_files_to_process(
+        config.TODO_LIST_PATHS_1,
         process_func=process_file,
         replace_func=nested_root_path_replacer,
         path_replacements=PATH_REPLACEMENTS,
         use_extra_kwargs=True,
     )
-    seen_tasks.append(staged_tasks)
-    execute_tasks(staged_tasks)
+    seen_tasks.append(staged_tasks1)
+    execute_tasks(staged_tasks1)
 
-    debug_staging_library('BEFORE GET IDS', show_table=True)
+    # Pull out the library db path explicitly
+    # Since library.db will be needed throughout the process, its location is stored
+    # here once it's been moved and updated with the new paths.
+    LIBRARY_DB_STAGING_PATH = None
+    LIBRARY_DB_SOURCE_PATH = None
+    for task in staged_tasks1:
+        if task['original'].name == 'library.db':
+            LIBRARY_DB_STAGING_PATH = task['staging']
+            LIBRARY_DB_SOURCE_PATH = task['source']
+    assert LIBRARY_DB_SOURCE_PATH is not None
 
     ### Update IDs
-    print_log("STEP2. Update IDs.")
+    print_log("STEP2. Get IDs.")
     # Generate IDs based on those new paths and save them in the global variable
-    IDS = get_ids(LIBRARY_DB_STAGING_PATH)
+    target_data_path = config.TARGET.data
+    IDS = get_ids(LIBRARY_DB_STAGING_PATH, LIBRARY_DB_SOURCE_PATH, target_data_path)
     # ID types occurring in paths (<- search for that to find another comment with more details if you missed it)
     # Include/Exclude types (see get_ids) to specify which are used for looking through paths.
     # Currently, all are included, just to be safe.
@@ -949,7 +976,21 @@ def main():
     }
     print(f'id_replacements_path = {ub.urepr(id_replacements_path, nl=1)}')
 
-    debug_staging_library('AFTER GET IDS', show_table=True)
+    # debug_staging_library('BEFORE GET IDS', show_table=True)
+    path_replacements2 = {**PATH_REPLACEMENTS, **id_replacements_path}
+    print(f'path_replacements2 = {ub.urepr(path_replacements2, nl=1)}')
+
+    staged_tasks2 = collect_files_to_process(
+        config.TODO_LIST_PATHS_2,
+        process_func=process_file,
+        replace_func=nested_root_path_replacer,
+        path_replacements=path_replacements2,
+        use_extra_kwargs=True,
+    )
+    seen_tasks.append(staged_tasks2)
+    execute_tasks(staged_tasks2)
+
+    # debug_staging_library('AFTER GET IDS', show_table=True)
 
     # To (mostly) reuse the same functions from step 1, the replacements dict needs to be updated with
     # id_replacements_path. It can't be replaced since it's also used to find the files (which uses the
@@ -967,7 +1008,7 @@ def main():
     rich.print("[white]STEP 3.1 Replace all paths with ids.")
     print(f'PATH_REPLACEMENTS={PATH_REPLACEMENTS}')
 
-    debug_staging_library('BEFORE REPLACE WITH IDS', show_table=True)
+    # debug_staging_library('BEFORE REPLACE WITH IDS', show_table=True)
 
     staged_tasks = collect_files_to_process(
         TODO_LIST_ID_PATHS,
@@ -984,7 +1025,7 @@ def main():
 
     # Replace remaining ids.
     rich.print("[white]STEP 3.2 Replace remaining ids.")
-    debug_staging_library('AFTER REPLACE WITH IDS', show_table=True)
+    # debug_staging_library('AFTER REPLACE WITH IDS', show_table=True)
     # raise Exception
     staged_tasks = collect_files_to_process(
         TODO_LIST_IDS,
@@ -1062,25 +1103,35 @@ def main():
 
 
 def debug_staging_library(name, show_table=True):
+    if 0:
+        return
     # from rich.markup import escape
     import pandas as pd
+    library_fpath = '/staging/staged-data/data/library.db'
+    def niceview(d):
+        if hasattr(d, 'hex'):
+            return d.hex()
+        else:
+            return d
 
     orig_fpath = '/root/.local/share/jellyfin/data/library.db'
     orig_fpath_shm = '/root/.local/share/jellyfin/data/library.db-shm'
     orig_fpath_wal = '/root/.local/share/jellyfin/data/library.db-wal'
 
-    library_fpath = '/staging/staged-data/data/library.db'
     print('-------')
     rich.print(f'[red][DEBUG] {name}: {library_fpath}  - {ub.hash_file(library_fpath)}')
     rich.print(f'[red][DEBUG] {name}: {orig_fpath}     - {ub.hash_file(orig_fpath)}')
     rich.print(f'[red][DEBUG] {name}: {orig_fpath_shm} - {ub.hash_file(orig_fpath_shm)}')
     rich.print(f'[red][DEBUG] {name}: {orig_fpath_wal} - {ub.hash_file(orig_fpath_wal)}')
     if show_table:
-        con = sqlite3.connect(library_fpath)
+        uri = 'file:' + os.fspath(library_fpath) + '?mode=ro&immutable=1'
+        con = sqlite3.connect(uri, uri=True)
         with con:
             # table_names = list(pd.read_sql_query("SELECT name FROM sqlite_master WHERE type='table';", con)['name'])
             table_name = 'TypedBaseItems'
             table = pd.read_sql_query(f"SELECT * FROM {table_name}", con)
+            # Make bytes show as hex for readability
+            table = table.map(niceview)
             print(table[['guid', 'Path']])
         rich.print(f'[red][DEBUG]{name}: {library_fpath} - {ub.hash_file(library_fpath)}')
     print('-------')

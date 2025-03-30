@@ -328,7 +328,7 @@ fs_path_replacements = {
     # "/data/movies": "Y:/Filme",
     # "/data/music": "Y:/Musik",
     '/media': '/data/jellyfin/media',
-    '/config': '/root/.local/share/jellyfin',
+    '/config': '/Jellyfin-dummy',
 }
 
 
@@ -344,7 +344,7 @@ fs_path_replacements = {
 # target_root = Path("D:/Jellyfin-dummy")
 
 original_root = Path('/root/.local/share/jellyfin')
-source_root = Path('/root/.local/share/jellyfin')
+source_root = Path('/jellyfin-copy')
 target_root = Path('/Jellyfin-dummy')
 
 
