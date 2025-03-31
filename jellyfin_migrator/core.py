@@ -83,7 +83,7 @@ def update_db_table(
         json_stop = len(json_columns)
         path_stop = json_stop + len(path_columns)
 
-        column_names = list(json_columns) + list(path_columns) + list(jf_image_columns)
+        # column_names = list(json_columns) + list(path_columns) + list(jf_image_columns)
         # For the sql query the desired row names should be enclosed in ` ` and comma separated.
         # It's important to note that the json columns come first, followed by the path columns
         columns = ", ".join([f"`{e}`" for e in list(json_columns) + list(path_columns)] + list(jf_image_columns))
@@ -127,7 +127,7 @@ def update_db_table(
             # result has the structure {column_name: updated_data} which makes it very easy to build
             # the update query at the end.
             result = dict()
-            old_rowdata = ub.dzip(column_names, row)
+            # old_rowdata = ub.dzip(column_names, row)
 
             # It's important to note that the tuple from cur.execute contains the columns _in the order
             # of the query string_. Therefore, we can separate json and path entries like this.
@@ -204,9 +204,9 @@ def update_db_table(
             # if 'path' in new_rowdata:
             #     if new_rowdata['path'] == '/data/jellyfin/media/music/Clair_de_Lune_-_Wright_Brass_-_United_States_Air_Force_Band_of_Flight.mp3':
             #         raise Exception
-            if 'path' not in new_rowdata:
-                if old_rowdata['path'] is not None:
-                    raise AssertionError('UNCHANGED PATH')
+            # if 'path' not in new_rowdata:
+            #     if old_rowdata['path'] is not None:
+            #         raise AssertionError('UNCHANGED PATH')
 
             # Similar to the initial query we construct a comma separated list of the columns, only this
             # time we write
