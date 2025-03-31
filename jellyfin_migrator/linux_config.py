@@ -360,6 +360,7 @@ TODO_LIST_PATHS_2 = [
         "source_root": SOURCE.data,
         "original_root": ORIGINAL.data,
         "target_root": TARGET.data,
+        "staging_root": STAGING.data,
         "target": "auto",
         "replacements": PATH_REPLACEMENTS,
     },
