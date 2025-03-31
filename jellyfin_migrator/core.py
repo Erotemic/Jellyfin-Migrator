@@ -662,12 +662,12 @@ def get_ids(LIBRARY_DB_STAGING_PATH, LIBRARY_DB_SOURCE_PATH, target_data_path):
 
         id_replacements_bin = dict()
         for guid, item_type, path in cur.execute("SELECT `guid`, `type`, `Path` FROM `TypedBaseItems`"):
+            if not path or path.startswith("%"):
+                # print('SKIP')
+                continue
             # print(f'COMPUTE REPLACEMENT GUID FOR: path={path}')
             if path.startswith(target_data_path):
                 # HACK
-                continue
-            if not path or path.startswith("%"):
-                # print('SKIP')
                 continue
 
             # Source: https://github.com/jellyfin/jellyfin/blob/7e8428e588b3f0a0574da44081098c64fe1a47d7/Emby.Server.Implementations/Library/LibraryManager.cs#L504 # noqa
