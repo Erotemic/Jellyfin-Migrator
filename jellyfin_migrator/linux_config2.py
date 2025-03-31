@@ -1,6 +1,6 @@
 """
 Temporary path while I work out how to best expose the config.
-This gives params that work for the end-to-end test.
+This gives params that I'm using on a production instance.
 """
 from pathlib import Path
 
@@ -90,11 +90,11 @@ class SystemAptVariant:
     ffmpeg     = "/usr/lib/jellyfin-ffmpeg/ffmpeg"
 
 
-SourceVariant = RootUserAptVariant
+SourceVariant = SystemAptVariant
 
 # Original should be set to source, unless you are performing the migration on
 # a different setup, which should not be common.
-OriginalVariant = RootUserAptVariant
+OriginalVariant = SystemAptVariant
 
 DestinationVariant = DockerVariant
 _S = SourceVariant
@@ -110,7 +110,7 @@ PATH_REPLACEMENTS = {
     # "/media/music": "/media/music",
 
     # HACKED IN
-    "/data/jellyfin/media": "/media",
+    "/data/store/Media": "/data/jellyfin/media",
     # "/root/.local/share/jellyfin": "/media",
 
     # Paths to the different parts of the jellyfin database. Determine these
@@ -156,7 +156,7 @@ FS_PATH_REPLACEMENTS = {
 
     # HACKED IN
     # '/data/jellyfin/media': '/media',
-    '/media': '/data/jellyfin/media',
+    "/data/jellyfin/media": "/data/store/Media",
 
     # '/config': '/root/.local/share/jellyfin',
     _D.data: _S.data,
@@ -591,3 +591,4 @@ TODO_LIST_IDS = [
         },
     },
 ]
+

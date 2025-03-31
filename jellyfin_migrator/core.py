@@ -16,6 +16,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import json
 import os
+import sys
 import sqlite3
 import xml.etree.ElementTree as ET
 
@@ -32,12 +33,6 @@ from jellyfin_migrator.utils import nested_id_path_replacer
 from jellyfin_migrator.id_scanner import (
     bid2sid, sid2did, sid2bid, convert_ancestor_id
 )
-
-# Choose an appropriate config file (
-# TODO: config should really be a path to some yaml or json)
-# import jellyfin_migrator_config as config
-# import jellyfin_migrator.windows_config as config
-import jellyfin_migrator.linux_config as config
 import logging
 
 
@@ -48,7 +43,6 @@ try:
 except ImportError:
     raise
 
-LOG_FILE = config.LOG_FILE
 logger = logging.getLogger(__name__)
 
 
@@ -893,6 +887,16 @@ def setup_logger(log_file):
 def main():
     import textwrap
     from rich.markup import escape
+    # Choose an appropriate config file (
+    # TODO: config should really be a path to some yaml or json)
+    # import jellyfin_migrator_config as config
+    # import jellyfin_migrator.windows_config as config
+
+    # Hack while I figure out how to best expose config files to users.
+    if 'linux2' in sys.argv:
+        import jellyfin_migrator.linux_config2 as config
+    else:
+        import jellyfin_migrator.linux_config as config
 
     setup_logger(config.LOG_FILE)
 
