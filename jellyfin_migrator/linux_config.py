@@ -213,12 +213,8 @@ class TARGET:
 
 
 class STAGING:
-    config = STAGING_ROOT / 'staged-data/config'  # hack
-    cache = STAGING_ROOT / 'staged-cached'
-    log = STAGING_ROOT / 'staged-log'
-    data = STAGING_ROOT / 'staged-data'
-    transcodes = STAGING_ROOT / 'staged-transcodes'
-    ffmpeg = STAGING_ROOT / 'staged-ffmpeg'
+    config = STAGING_ROOT / 'config'
+    data = STAGING_ROOT
 
 
 ### The To-Do Lists: TODO_LIST_PATHS, TODO_LIST_ID_PATHS and TODO_LIST_IDS.

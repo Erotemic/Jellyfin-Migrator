@@ -34,6 +34,17 @@ from jellyfin_migrator.id_scanner import (
     bid2sid, sid2did, sid2bid, convert_ancestor_id
 )
 import logging
+import textwrap
+
+banner = textwrap.dedent(
+    r"""
+    ===========================================================================
+     _ ____ _    _    _   _ ____ _ _  _    _  _ _ ____ ____ ____ ___ ____ ____
+     | |___ |    |     \_/  |___ | |\ |    |\/| | | __ |__/ |__|  |  |  | |__/
+    _| |___ |___ |___   |   |    | | \|    |  | | |__] |  \ |  |  |  |__| |  \
+
+    ===========================================================================
+    """)
 
 
 try:
@@ -789,10 +800,14 @@ def update_file_dates(LIBRARY_DB_STAGING_PATH, FS_PATH_REPLACEMENTS, seen_tasks)
 
 
 def execute_tasks(staged_tasks):
-    import pandas as pd
-    logger.info('[blue]Staged Tasks:')
-    df = pd.DataFrame(t for t in staged_tasks)
-    logger.info('Staged Task Table: \n' + str(df))
+    try:
+        import pandas as pd
+    except ImportError:
+        ...
+    else:
+        df = pd.DataFrame(t for t in staged_tasks)
+        logger.info('Staged Task Table: \n' + str(df))
+
     logger.info('[blue]Executing Tasks:')
     for task in staged_tasks:
         task = task.copy()
@@ -852,6 +867,9 @@ def execute_tasks(staged_tasks):
 
 
 def setup_logger(log_file):
+    """
+    Configure the application level logger.
+    """
     from rich.logging import RichHandler
     from rich.markup import render
 
@@ -884,42 +902,50 @@ def setup_logger(log_file):
     logger.addHandler(file_handler)
 
 
-def main():
-    import textwrap
+def main(argv=True, **kwargs):
+    """
+    Main entry point.
+
+    Parse arguments, read configuration, prepare migration, copy migratable
+    data to a staging directory.
+    """
+    from jellyfin_migrator import config as config_mod
+    config = config_mod.JellyfinMigratorConfig.cli(argv=argv, data=kwargs, strict=True)
+    import rich
     from rich.markup import escape
-    # Choose an appropriate config file (
-    # TODO: config should really be a path to some yaml or json)
-    # import jellyfin_migrator_config as config
-    # import jellyfin_migrator.windows_config as config
+    if 0:
+        requested_config_text = ub.urepr(config, nl=2)
+        rich.print('config = ' + escape(requested_config_text))
+    config = config_mod.postprocess_config(config)
 
-    # Hack while I figure out how to best expose config files to users.
-    if 'linux2' in sys.argv:
-        import jellyfin_migrator.linux_config2 as config
-    else:
-        import jellyfin_migrator.linux_config as config
+    # Convert the config into a form suitable for the original logic
+    migration_datastructures = config_mod.prepare_migration_datastructures(config)
+    PATH_REPLACEMENTS = migration_datastructures['PATH_REPLACEMENTS']
+    TODO_LIST_PATHS_1 = migration_datastructures['TODO_LIST_PATHS_1']
+    TODO_LIST_PATHS_2 = migration_datastructures['TODO_LIST_PATHS_2']
+    TODO_LIST_ID_PATHS = migration_datastructures['TODO_LIST_ID_PATHS']
+    TODO_LIST_IDS = migration_datastructures['TODO_LIST_IDS']
+    FS_PATH_REPLACEMENTS = migration_datastructures['FS_PATH_REPLACEMENTS']
+    target_data_path = config['target']['data']
 
-    setup_logger(config.LOG_FILE)
+    setup_logger(config.log_file)
 
     logger.info("")
-    logger.info('\n[white]' + escape(textwrap.dedent(
-        r"""
-        ===========================================================================
-         _ ____ _    _    _   _ ____ _ _  _    _  _ _ ____ ____ ____ ___ ____ ____
-         | |___ |    |     \_/  |___ | |\ |    |\/| | | __ |__/ |__|  |  |  | |__/
-        _| |___ |___ |___   |   |    | | \|    |  | | |__] |  \ |  |  |  |__| |  \
-
-        ===========================================================================
-        """)))
+    logger.info('\n[white]' + escape(banner))
     logger.info("Starting Jellyfin Database Migration")
+    resolved_config_text = ub.urepr(config, nl=2)
+    logger.info('config = ' + escape(resolved_config_text))
 
     ### Copy relevant files and adjust all paths to the new locations.
     logger.info("[white]STEP 1. Copy relevant files and adjust all paths to the new locations.")
 
+    if not config.media_replacements:
+        logger.warn('NO MEDIA REPLACEMENTS WERE GIVEN. This might be a problem')
+
     seen_tasks = []
 
-    PATH_REPLACEMENTS = config.PATH_REPLACEMENTS
     staged_tasks1 = collect_files_to_process(
-        config.TODO_LIST_PATHS_1,
+        TODO_LIST_PATHS_1,
         process_func=process_file,
         replace_func=nested_root_path_replacer,
         path_replacements=PATH_REPLACEMENTS,
@@ -942,7 +968,6 @@ def main():
     ### Update IDs
     logger.info("STEP2. Get IDs.")
     # Generate IDs based on those new paths and save them in the global variable
-    target_data_path = config.TARGET.data
     IDS = get_ids(LIBRARY_DB_STAGING_PATH, LIBRARY_DB_SOURCE_PATH, target_data_path)
     # ID types occurring in paths (<- search for that to find another comment with more details if you missed it)
     # Include/Exclude types (see get_ids) to specify which are used for looking through paths.
@@ -962,7 +987,7 @@ def main():
     logger.info(f'path_replacements2 = {ub.urepr(path_replacements2, nl=1)}')
 
     staged_tasks2 = collect_files_to_process(
-        config.TODO_LIST_PATHS_2,
+        TODO_LIST_PATHS_2,
         process_func=process_file,
         replace_func=nested_root_path_replacer,
         path_replacements=path_replacements2,
@@ -979,7 +1004,6 @@ def main():
     # the dict used to convert from source -> target is different, in reality, this is not an issue,
     # since step 1 only processes the roots of the paths (which cannot be similar to anything in
     # id_replacements_path).
-    TODO_LIST_ID_PATHS = config.TODO_LIST_ID_PATHS
     for i, job in enumerate(TODO_LIST_ID_PATHS):
         TODO_LIST_ID_PATHS[i]["replacements"].update(id_replacements_path)
 
@@ -1010,7 +1034,7 @@ def main():
     # debug_staging_library('AFTER REPLACE WITH IDS', show_table=True)
     # raise Exception
     staged_tasks = collect_files_to_process(
-        config.TODO_LIST_IDS,
+        TODO_LIST_IDS,
         process_func=partial(update_db_table_ids, IDS=IDS),
         replace_func=None,
         path_replacements=PATH_REPLACEMENTS,
@@ -1021,68 +1045,10 @@ def main():
 
     # Finally, update the file dates in the db.
     logger.info("[white]STEP 4. Update the file dates.")
-    FS_PATH_REPLACEMENTS = config.FS_PATH_REPLACEMENTS
     update_file_dates(LIBRARY_DB_STAGING_PATH, FS_PATH_REPLACEMENTS, seen_tasks)
 
     logger.info("")
     logger.info("[green]Jellyfin Database Migration complete.")
-
-    # We don't actually need the following, mounting /staging/staged-data to config should work.
-    # d1 = {k: getattr(config.STAGING, k) for k in dir(config.STAGING) if not k.startswith('_')}
-    # d2 = {k: getattr(config.TARGET, k) for k in dir(config.STAGING) if not k.startswith('_')}
-
-    # # Ensure we move directories in the right order
-    # import networkx as nx
-    # # Map destination paths to source paths
-    # # path_mapping = {d2[k]: d1[k] for k in d1}
-    # # Add nodes (only using destination paths)
-    # G = nx.DiGraph()
-    # for k, v in d2.items():
-    #     G.add_node(v, key=k)
-    # G.add_nodes_from(d2.values())
-    # for path1 in d2.values():
-    #     for path2 in d2.values():
-    #         if path1 != path2 and str(path2).startswith(str(path1)):
-    #             G.add_edge(path1, path2)  # path1 must be moved before path2
-    # G = nx.transitive_reduction(G)
-    # for k, v in d2.items():
-    #     G.nodes[v]['key'] = k
-    # nx.write_network_text(G)
-
-    # # Perform a topological sort
-    # ordered_moves = [G.nodes[node]['key'] for node in nx.topological_sort(G)]
-
-    # lines = []
-    # for k in ordered_moves:
-    #     v1 = d1[k]
-    #     v2 = d2[k]
-    #     path = ub.Path(v1)
-    #     dst = ub.Path(v2)
-
-    #     # src = '/'.join([str(Path(*path.parts[0:-1])), path.parts[-1]])
-    #     src = path
-    #     # Trailing slash is crucial
-    #     line = (f'test -e {v1} && rsync -avPR {src}/ {dst}/')
-
-    #     # src = './' + path.name
-    #     # line = (f'test -e {src} && mv {src} {dst}')
-    #     lines.append(line)
-
-    # accept_text = '\n'.join(lines)
-    # # accept_text = ub.codeblock(
-    # #     """
-    # #     test -e /staging/staged-cached && rsync -avPR /staging/staged-cached /config/cache
-    # #     test -e /staging/staged-config && rsync -avPR /staging/staged-config /config
-    # #     test -e /staging/staged-data && rsync -avPR /staging/staged-data /config/data
-    # #     test -e /staging/staged-ffmpeg && rsync -avPR /staging/staged-ffmpeg usr/lib/jellyfin-ffmpeg/ffmpeg
-    # #     test -e /staging/staged-log && rsync -avPR /staging/staged-log /config/log
-    # #     test -e /staging/staged-transcodes && rsync -avPR /staging/staged-transcodes /config/data/transcodes
-    # #     """
-    # # )
-    # print(accept_text)
-    # accept_fpath = config.STAGING_ROOT / 'accept.sh'
-    # accept_fpath.write_text(accept_text)
-    # # accept_fpath.chmod('u+x')
 
 
 def debug_staging_library(name, show_table=True):

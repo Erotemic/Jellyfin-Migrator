@@ -2,28 +2,15 @@
 TODO:
     - [ ] Add collections to source server to test.
 """
+import ubelt as ub
 
-def main():
-    """
-    An end to end test that will create two docker containers:
 
-        1. An official jellyfin docker container
-        2. An ubuntu container with custom jellfin.
-
-    Given these containers we attempt to migrate the ubuntu variant to the
-    official docker variant.
-    """
+def setup_original_container(repo_dpath):
     from jellyfin_migrator.demo.jellyfin_apt_variant import JellyfinAptContainer
-    import jellyfin_migrator
-    import ubelt as ub
-
-    # Get the path to the jellyfin migrator repo. we are going to copy the
-    # entire thing in.
-    repo_dpath = ub.Path(jellyfin_migrator.__file__).parent.parent
 
     # Create two jellyfin servers. One will be the source and one will be the
     # destination.
-    self = apt_variant = JellyfinAptContainer(mounts=[
+    apt_variant = apt_variant = JellyfinAptContainer(mounts=[
         {
             'source': repo_dpath,
             'target': '/Jellyfin-Migrator'
@@ -35,20 +22,20 @@ def main():
 
     # Clear any existing version of the code in the docker container, and
     # copy in a fresh copy of the latest code.
-    self = apt_variant
+    apt_variant = apt_variant
     # Check that we can run Python
-    self.start()
-    self.connect()
-    self.call(['python3', '--version'])
+    apt_variant.start()
+    apt_variant.connect()
+    apt_variant.call(['python3', '--version'])
     # Run the migrator (with exec for stderr)
-    _ = self.exec('apt update', verbose=3)
-    _ = self.exec('apt install python3-pip fd-find tree psmisc sqlite3  --yes', verbose=3)
-    _ = self.exec('pip install pandas ubelt rich kwutil networkx', verbose=3)
+    _ = apt_variant.exec('apt update', verbose=3)
+    _ = apt_variant.exec('apt install python3-pip fd-find tree psmisc sqlite3  --yes', verbose=3)
+    _ = apt_variant.exec('pip install pandas ubelt rich kwutil networkx scriptconfig', verbose=3)
 
     # TODO: you might need to actually do something in the jellyfin server to
     # get it to populate jellyfin.db, otherwise maybe it is empty and this
     # fails?
-    port = self.port
+    port = apt_variant.port
     username = 'jellyfin-user'
     password = 'jellyfin-pass'
     # Create a client to perform some initial configuration.
@@ -98,53 +85,21 @@ def main():
     apt_variant._run_server()
 
     # Verify that jellyfin.db has data in it
-    _ = self.exec('du /root/.local/share/jellyfin/data/jellyfin.db', verbose=3)
-    _ = self.exec('ls -al /root/.local/share/jellyfin/data/jellyfin.db', verbose=3)
+    _ = apt_variant.exec('du /root/.local/share/jellyfin/data/jellyfin.db', verbose=3)
+    _ = apt_variant.exec('ls -al /root/.local/share/jellyfin/data/jellyfin.db', verbose=3)
 
     USER_INTERACTIVE = 0
     if USER_INTERACTIVE:
         selenium_login("http://localhost:8098/")
 
     # Delete any previous migration data.
-    self.start()
-    self.connect()
-    self.call(['python3', '--version'])
+    apt_variant.start()
+    apt_variant.connect()
+    apt_variant.call(['python3', '--version'])
+    return apt_variant
 
-    # RUN MIGRATION
-    self.call(['rm', '-rf', '/staging'])
-    _ = self.exec('python3 -m jellyfin_migrator', cwd='/Jellyfin-Migrator', verbose=3, system=True, exec_args='-it')
 
-    _ = self.exec('ls', cwd='/staging', verbose=3)
-    # Check that the paths look like they updated correctly.
-    # _ = self.exec('sqlite3 /root/.local/share/jellyfin/data/library.db "SELECT Path FROM TypedBaseItems;"', verbose=3)
-    _ = self.exec('sqlite3 /staging/staged-data/data/library.db "SELECT Path FROM TypedBaseItems;"', verbose=3)
-
-    dpath = ub.Path.appdir('jellyfin-migrator').ensuredir()
-    # Create two variants of the staging directory for debugging
-    raw_local_staging = (dpath / 'staging-raw')
-    live_local_staging = (dpath / 'staging-live')
-    try:
-        raw_local_staging.delete()
-        live_local_staging.delete()
-    except PermissionError:
-        ub.cmd(f'sudo rm -rf {raw_local_staging}', verbose=3, system=True)
-        ub.cmd(f'sudo rm -rf {live_local_staging}', verbose=3, system=True)
-    self.copy_out('staging', to_path=raw_local_staging)
-    raw_local_staging.copy(live_local_staging)
-
-    from jellyfin_migrator.debug_tools import check_main_databases
-    check_main_databases(raw_local_staging / 'staged-data')
-    check_main_databases(raw_local_staging / 'staged-data', include='TypedBaseItems')
-
-    hashes1 = {p.relative_to(raw_local_staging): ub.hash_file(p) for p in sorted(raw_local_staging.glob('**')) if p.is_file()}
-    hashes2 = {p.relative_to(live_local_staging): ub.hash_file(p) for p in sorted(live_local_staging.glob('**')) if p.is_file()}
-    difference = ub.IndexableWalker(hashes1).diff(hashes2)
-    assert difference['similarity'] == 1
-
-    ####
-    ####
-    ####
-
+def setup_target_container(repo_dpath, live_local_staging):
     # TODO: ensure media paths have changed
     # sqlite3 library.db "SELECT Path FROM TypedBaseItems;"
 
@@ -153,7 +108,7 @@ def main():
     docker_variant = JellyfinDockerContainer(mounts=[
         {
             # Directly mount the staged data as the new jellyfin configuration.
-            'source': live_local_staging / 'staged-data',
+            'source': live_local_staging,
             'target': '/config',
             'type': 'volume',
         },
@@ -177,7 +132,86 @@ def main():
     # docker_variant.exec('sha1sum /config/data/library.db', verbose=3)
     # docker_variant.exec('sqlite3 /config/data/library.db "SELECT Path FROM TypedBaseItems;"', verbose=3)
     # docker_variant.exec('sqlite3 /config/data/jellyfin.db -header -column "SELECT * FROM Users;"', verbose=3)
-    import ubelt as ub
+    return docker_variant
+
+
+def main():
+    """
+    An end to end test that will create two docker containers:
+
+        1. An official jellyfin docker container
+        2. An ubuntu container with custom jellfin.
+
+    Given these containers we attempt to migrate the ubuntu variant to the
+    official docker variant.
+    """
+    import jellyfin_migrator
+    # Get the path to the jellyfin migrator repo. we are going to copy the
+    # entire thing in.
+    repo_dpath = ub.Path(jellyfin_migrator.__file__).parent.parent
+    dpath = ub.Path.appdir('jellyfin-migrator').ensuredir()
+
+    ####
+    ####
+    ####
+    apt_variant = setup_original_container(repo_dpath)
+
+    ####
+    ####
+    ####
+    # RUN MIGRATION
+    config_fpath = dpath / 'apt_to_docker_config.yaml'
+    config_fpath.write_text(ub.codeblock(
+        '''
+        source: root-apt
+        target: docker
+        original: root-apt
+
+        staging_root: /staging-e2e
+        log_file: /staging-e2e/jf-migrator-e2e.log
+
+        media_replacements:
+            - src: /data/jellyfin/media
+              dst: /media
+        '''))
+
+    apt_variant.call(['rm', '-rf', '/staging-e2e'])
+    apt_variant.call(['mkdir', '-p', '/staging-e2e'])
+    apt_variant.copy_into(config_fpath, ub.Path('/staging-e2e/apt_to_docker_config.yaml'))
+    _ = apt_variant.exec(
+        'python3 -m jellyfin_migrator --config /staging-e2e/apt_to_docker_config.yaml',
+        cwd='/Jellyfin-Migrator', verbose=3, system=True, exec_args='-it')
+
+    _ = apt_variant.exec('ls', cwd='/staging-e2e', verbose=3)
+    # Check that the paths look like they updated correctly.
+    # _ = apt_variant.exec('sqlite3 /root/.local/share/jellyfin/data/library.db "SELECT Path FROM TypedBaseItems;"', verbose=3)
+    _ = apt_variant.exec('sqlite3 /staging-e2e/data/library.db "SELECT Path FROM TypedBaseItems;"', verbose=3)
+
+    # Create two variants of the staging directory for debugging
+    raw_local_staging = (dpath / 'staging-raw')
+    live_local_staging = (dpath / 'staging-live')
+    try:
+        raw_local_staging.delete()
+        live_local_staging.delete()
+    except PermissionError:
+        ub.cmd(f'sudo rm -rf {raw_local_staging}', verbose=3, system=True)
+        ub.cmd(f'sudo rm -rf {live_local_staging}', verbose=3, system=True)
+    apt_variant.copy_out('staging-e2e', to_path=raw_local_staging)
+    raw_local_staging.copy(live_local_staging)
+
+    from jellyfin_migrator.debug_tools import check_main_databases
+    check_main_databases(raw_local_staging)
+    check_main_databases(raw_local_staging, include='TypedBaseItems')
+
+    hashes1 = {p.relative_to(raw_local_staging): ub.hash_file(p) for p in sorted(raw_local_staging.glob('**')) if p.is_file()}
+    hashes2 = {p.relative_to(live_local_staging): ub.hash_file(p) for p in sorted(live_local_staging.glob('**')) if p.is_file()}
+    difference = ub.IndexableWalker(hashes1).diff(hashes2)
+    assert difference['similarity'] == 1
+
+    ####
+    ####
+    ####
+    docker_variant = setup_target_container(repo_dpath, live_local_staging)
 
     # Create a client to perform some initial configuration.
     port = docker_variant.port
@@ -219,16 +253,15 @@ def main():
     # sqlite3 /config/data/library.db "PRAGMA wal_checkpoint(FULL);"
     # sqlite3 /config/data/jellyfin.db "PRAGMA wal_checkpoint(FULL);"
 
-    raw_local_staging / 'staging-data'
     import xdev
-    old = (raw_local_staging / 'staged-data/config/encoding.xml').read_text()
-    new = (live_local_staging / 'staged-data/config/encoding.xml').read_text()
+    old = (raw_local_staging / 'config/encoding.xml').read_text()
+    new = (live_local_staging / 'config/encoding.xml').read_text()
     print(xdev.difftext(old, new, colored=True))
 
-    # check_main_databases(raw_local_staging / 'staged-data')
-    # check_main_databases(live_local_staging / 'staged-data')
+    # check_main_databases(raw_local_staging )
+    # check_main_databases(live_local_staging )
 
-    # _ = self.exec(ub.codeblock(
+    # _ = apt_variant.exec(ub.codeblock(
     #     r'''
     #     python3 -m jellyfin_migrator.id_scanner \
     #         --library-db /config/data/library.db \
@@ -250,9 +283,9 @@ def main():
     # docker_variant.exec('ls /', verbose=3)
     # docker_variant.exec('chmod +x /staging/accept.sh', verbose=3)
     # docker_variant.exec('cat /staging/accept.sh', verbose=3)
-    # docker_variant.exec('sha1sum /staging/staged-data/data/jellyfin.db', verbose=3)
+    # docker_variant.exec('sha1sum /staging/data/jellyfin.db', verbose=3)
     # docker_variant.exec('sha1sum /config/data/jellyfin.db', verbose=3)
-    # docker_variant.exec('ls -al /staging/staged-data/data/jellyfin.db', verbose=3)
+    # docker_variant.exec('ls -al /staging/data/jellyfin.db', verbose=3)
     # docker_variant.exec('ls -al /config/data/jellyfin.db', verbose=3)
     # docker_variant.exec('sqlite3 /', verbose=3)
 
@@ -269,9 +302,9 @@ def main():
     # Let's check that first.
 
     from jellyfin_migrator.debug_tools import check_main_databases
-    check_main_databases(raw_local_staging / 'staged-data', include='TypedBaseItems')
+    check_main_databases(raw_local_staging, include='TypedBaseItems')
 
-    check_main_databases(live_local_staging / 'staged-data', include='TypedBaseItems')
+    check_main_databases(live_local_staging, include='TypedBaseItems')
 
     apt_variant.exec(ub.codeblock(
         r'''
