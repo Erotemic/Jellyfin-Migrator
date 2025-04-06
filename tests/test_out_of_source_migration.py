@@ -59,7 +59,7 @@ def test_out_of_source_migration():
             ffmpeg:     /usr/lib/jellyfin-ffmpeg/ffmpeg
 
         staging_root: {local_staging}
-        log_file: {local_staging}/jf-migrator-e2e.log
+        log_file: {local_staging}/jf-migrator-oos.log
 
         media_replacements:
             - src: /data/jellyfin/media
@@ -74,32 +74,13 @@ def test_out_of_source_migration():
     ub.cmd('python3 -m jellyfin_migrator --config /staging-e2e/apt_to_docker_config.yaml',
            cwd='/Jellyfin-Migrator', verbose=3, system=True, exec_args='-it')
 
-    _ = apt_variant.exec('ls', cwd='/staging-e2e', verbose=3)
-    # Check that the paths look like they updated correctly.
-    # _ = apt_variant.exec('sqlite3 /root/.local/share/jellyfin/data/library.db "SELECT Path FROM TypedBaseItems;"', verbose=3)
-    _ = apt_variant.exec('sqlite3 /staging-e2e/data/library.db "SELECT Path FROM TypedBaseItems;"', verbose=3)
-
     # Create two variants of the staging directory for debugging
-    raw_local_staging = (dpath / 'staging-raw')
     live_local_staging = (dpath / 'staging-live')
     try:
-        raw_local_staging.delete()
         live_local_staging.delete()
     except PermissionError:
-        ub.cmd(f'sudo rm -rf {raw_local_staging}', verbose=3, system=True)
         ub.cmd(f'sudo rm -rf {live_local_staging}', verbose=3, system=True)
-    apt_variant.copy_out('staging-e2e', to_path=raw_local_staging)
-    raw_local_staging.copy(live_local_staging)
-
-    if 1:
-        from jellyfin_migrator.debug_tools import check_main_databases
-        check_main_databases(raw_local_staging)
-        check_main_databases(raw_local_staging, include='TypedBaseItems')
-
-        hashes1 = {p.relative_to(raw_local_staging): ub.hash_file(p) for p in sorted(raw_local_staging.glob('**')) if p.is_file()}
-        hashes2 = {p.relative_to(live_local_staging): ub.hash_file(p) for p in sorted(live_local_staging.glob('**')) if p.is_file()}
-        difference = ub.IndexableWalker(hashes1).diff(hashes2)
-        assert difference['similarity'] == 1
+    local_staging.copy(live_local_staging)
 
     ####
     ####

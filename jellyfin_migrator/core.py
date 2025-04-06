@@ -792,7 +792,12 @@ def update_file_dates(LIBRARY_DB_STAGING_PATH, FS_PATH_REPLACEMENTS, seen_tasks)
                 staging = target_to_staging.get(target, target)
                 staging = Path(staging)
 
-                if not staging.exists():
+                try:
+                    _exists = staging.exists()
+                except PermissionError:
+                    _exists = False
+
+                if not _exists:
                     logger.warn(f"[yellow]File doesn't seem to exist; can't update its dates in the database: {staging!r}")
                     continue
 
