@@ -32,8 +32,11 @@ from jellyfin_migrator.utils import nested_id_path_replacer
 from jellyfin_migrator.id_scanner import (
     bid2sid, sid2did, sid2bid, convert_ancestor_id
 )
+from jellyfin_migrator.utils import requires_permission
+from jellyfin_migrator.utils import SudoCredentialRefresher
 import logging
 import textwrap
+from contextlib import ExitStack
 
 banner = textwrap.dedent(
     r"""
@@ -937,6 +940,73 @@ def setup_logger(log_file):
     logger.addHandler(file_handler)
 
 
+def setup_logger2(log_file):
+    """
+    Configure the application level logger with background thread processing.
+    """
+    import logging
+    import logging.handlers
+    import queue
+    from rich.logging import RichHandler
+    from rich.markup import render
+    import ubelt as ub
+
+    log_fpath = ub.Path(log_file)
+    if not log_fpath.parent.exists():
+        raise Exception('Log directory does not exist')
+
+    def strip_rich_markup(message: str) -> str:
+        return str(render(message))
+
+    # Create a queue for log records
+    log_queue = queue.Queue(-1)  # No limit on queue size
+
+    # Create and configure the logger
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG)
+
+    # Remove any existing handlers
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+
+    # Create a QueueHandler which puts records in the queue
+    queue_handler = logging.handlers.QueueHandler(log_queue)
+    logger.addHandler(queue_handler)
+
+    # Define log format with time
+    log_format = "%(asctime)s.%(msecs)03d - %(levelname)s - %(funcName)s - %(message)s"
+    date_format = "%Y-%m-%d %H:%M:%S"
+
+    # Create handlers that will do the actual logging
+    # Console handler with Rich
+    console_handler = RichHandler(markup=True)
+    console_handler.setLevel(logging.DEBUG)
+
+    # File handler without Rich formatting
+    class NoRichFileHandler(logging.FileHandler):
+        def emit(self, record):
+            record.msg = strip_rich_markup(record.msg)
+            super().emit(record)
+
+    file_handler = NoRichFileHandler(log_file)
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter(log_format, datefmt=date_format))
+
+    # Create a QueueListener which will process the queue
+    listener = logging.handlers.QueueListener(
+        log_queue,
+        console_handler,
+        file_handler,
+        respect_handler_level=True  # Respect handler levels
+    )
+
+    # Start the listener
+    listener.start()
+
+    # Return both the logger and the listener in case you need to stop it later
+    return logger, listener
+
+
 @profile
 def remove_subpaths(path_list):
     """
@@ -953,102 +1023,6 @@ def remove_subpaths(path_list):
         if not any(path.is_relative_to(o) for o in path_list if o != path):
             result.append(path)
     return result
-
-
-@profile
-def requires_permission(config):
-    """
-    Check if we will need elevated permissions to copy some files.
-    """
-    from os import access, R_OK, X_OK
-    paths = list(config['source'].values())
-    paths = [ub.Path(p) for p in paths]
-    paths = remove_subpaths(paths)
-    class RequiresPermission(Exception):
-        ...
-    try:
-        import kwutil
-        pman = kwutil.ProgressManager()
-        with pman:
-            for dpath in pman.progiter(paths, desc='prescan paths'):
-                for r, ds, fs in dpath.walk():
-                    for fname in fs:
-                        path = r / fname
-                        if not access(path, R_OK):
-                            raise RequiresPermission
-                    if not access(r, X_OK):
-                        raise RequiresPermission
-    except RequiresPermission:
-        print('Detected that permissions will be required')
-        return True
-    else:
-        print('No eleveated permissions will be required')
-        return False
-
-
-class SudoCredentialRefresher:
-    def __init__(self, interval: float = 300.0):
-        """
-        Initialize the sudo credential refresher.
-
-        Args:
-            interval: Refresh interval in seconds (default 300 = 5 minutes)
-        """
-        import threading
-        self.interval = interval
-        self._stop_event = threading.Event()
-        self._thread = None
-
-    def _refresh_loop(self):
-        """Background thread that periodically validates sudo credentials"""
-        import subprocess
-        while not self._stop_event.wait(self.interval):
-            try:
-                subprocess.run(
-                    ['sudo', '--validate'],
-                    check=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-            except subprocess.CalledProcessError:
-                # If validation fails, try to re-authenticate
-                try:
-                    subprocess.run(
-                        ['sudo', '--askpass', '--validate'],
-                        check=True,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL
-                    )
-                except subprocess.CalledProcessError:
-                    # If we can't re-authenticate, stop the thread
-                    self._stop_event.set()
-                    break
-
-    def start(self):
-        """Start the background refresh thread"""
-        import threading
-        if self._thread is None or not self._thread.is_alive():
-            self._stop_event.clear()
-            self._thread = threading.Thread(
-                target=self._refresh_loop,
-                daemon=True  # Thread will exit when main program exits
-            )
-            self._thread.start()
-
-    def stop(self):
-        """Stop the background refresh thread"""
-        self._stop_event.set()
-        if self._thread is not None:
-            self._thread.join(timeout=1)
-
-    def __enter__(self):
-        """Context manager entry"""
-        self.start()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit"""
-        self.stop()
 
 
 @profile
@@ -1078,7 +1052,7 @@ def main(argv=True, **kwargs):
     FS_PATH_REPLACEMENTS = migration_datastructures['FS_PATH_REPLACEMENTS']
     target_data_path = config['target']['data']
 
-    setup_logger(config.log_file)
+    setup_logger2(config.log_file)
 
     logger.info("")
     logger.info('\n[white]' + escape(banner))
@@ -1086,6 +1060,7 @@ def main(argv=True, **kwargs):
     resolved_config_text = ub.urepr(config, nl=2)
     logger.info('config = ' + escape(resolved_config_text))
 
+    contexts = []
     if requires_permission(config):
         logger.info(ub.paragraph(
             '''
@@ -1097,120 +1072,125 @@ def main(argv=True, **kwargs):
         # Once we have them, keep refreshing them
         credential_refresher = SudoCredentialRefresher()  # NOQA
         credential_refresher.start()
+        contexts.append(credential_refresher)
 
-    ### Copy relevant files and adjust all paths to the new locations.
-    logger.info("[white]STEP 1. Copy relevant files and adjust all paths to the new locations.")
+    with ExitStack() as stack:
+        for context in contexts:
+            stack.enter_context(context)
 
-    if not config.media_replacements:
-        logger.warn('NO MEDIA REPLACEMENTS WERE GIVEN. This might be a problem')
+        ### Copy relevant files and adjust all paths to the new locations.
+        logger.info("[white]STEP 1. Copy relevant files and adjust all paths to the new locations.")
 
-    seen_tasks = []
+        if not config.media_replacements:
+            logger.warn('NO MEDIA REPLACEMENTS WERE GIVEN. This might be a problem')
 
-    staged_tasks1 = collect_files_to_process(
-        TODO_LIST_PATHS_1,
-        process_func=process_file,
-        replace_func=nested_root_path_replacer,
-        path_replacements=PATH_REPLACEMENTS,
-        use_extra_kwargs=True,
-    )
-    seen_tasks.append(staged_tasks1)
-    execute_tasks(staged_tasks1)
+        seen_tasks = []
 
-    # Pull out the library db path explicitly
-    # Since library.db will be needed throughout the process, its location is stored
-    # here once it's been moved and updated with the new paths.
-    LIBRARY_DB_STAGING_PATH = None
-    LIBRARY_DB_SOURCE_PATH = None
-    for task in staged_tasks1:
-        if task['original'].name == 'library.db':
-            LIBRARY_DB_STAGING_PATH = task['staging']
-            LIBRARY_DB_SOURCE_PATH = task['source']
-    assert LIBRARY_DB_SOURCE_PATH is not None
+        staged_tasks1 = collect_files_to_process(
+            TODO_LIST_PATHS_1,
+            process_func=process_file,
+            replace_func=nested_root_path_replacer,
+            path_replacements=PATH_REPLACEMENTS,
+            use_extra_kwargs=True,
+        )
+        seen_tasks.append(staged_tasks1)
+        execute_tasks(staged_tasks1)
 
-    ### Update IDs
-    logger.info("STEP2. Get IDs.")
-    # Generate IDs based on those new paths and save them in the global variable
-    IDS = get_ids(LIBRARY_DB_STAGING_PATH, LIBRARY_DB_SOURCE_PATH, target_data_path)
-    # ID types occurring in paths (<- search for that to find another comment with more details if you missed it)
-    # Include/Exclude types (see get_ids) to specify which are used for looking through paths.
-    # Currently, all are included, just to be safe.
+        # Pull out the library db path explicitly
+        # Since library.db will be needed throughout the process, its location is stored
+        # here once it's been moved and updated with the new paths.
+        LIBRARY_DB_STAGING_PATH = None
+        LIBRARY_DB_SOURCE_PATH = None
+        for task in staged_tasks1:
+            if task['original'].name == 'library.db':
+                LIBRARY_DB_STAGING_PATH = task['staging']
+                LIBRARY_DB_SOURCE_PATH = task['source']
+        assert LIBRARY_DB_SOURCE_PATH is not None
 
-    id_replacements_path = {
-        **IDS["ancestor-str"],
-        **IDS["ancestor-str-dash"],
-        **IDS["str"],
-        **IDS["str-dash"],
-        "target_path_slash": PATH_REPLACEMENTS["target_path_slash"]
-    }
-    logger.info(f'id_replacements_path = {ub.urepr(id_replacements_path, nl=1)}')
+        ### Update IDs
+        logger.info("STEP2. Get IDs.")
+        # Generate IDs based on those new paths and save them in the global variable
+        IDS = get_ids(LIBRARY_DB_STAGING_PATH, LIBRARY_DB_SOURCE_PATH, target_data_path)
+        # ID types occurring in paths (<- search for that to find another comment with more details if you missed it)
+        # Include/Exclude types (see get_ids) to specify which are used for looking through paths.
+        # Currently, all are included, just to be safe.
 
-    # debug_staging_library('BEFORE GET IDS', show_table=True)
-    path_replacements2 = {**PATH_REPLACEMENTS, **id_replacements_path}
-    logger.info(f'path_replacements2 = {ub.urepr(path_replacements2, nl=1)}')
+        id_replacements_path = {
+            **IDS["ancestor-str"],
+            **IDS["ancestor-str-dash"],
+            **IDS["str"],
+            **IDS["str-dash"],
+            "target_path_slash": PATH_REPLACEMENTS["target_path_slash"]
+        }
+        logger.info(f'id_replacements_path = {ub.urepr(id_replacements_path, nl=1)}')
 
-    staged_tasks2 = collect_files_to_process(
-        TODO_LIST_PATHS_2,
-        process_func=process_file,
-        replace_func=nested_root_path_replacer,
-        path_replacements=path_replacements2,
-        use_extra_kwargs=True,
-    )
-    seen_tasks.append(staged_tasks2)
-    execute_tasks(staged_tasks2)
+        # debug_staging_library('BEFORE GET IDS', show_table=True)
+        path_replacements2 = {**PATH_REPLACEMENTS, **id_replacements_path}
+        logger.info(f'path_replacements2 = {ub.urepr(path_replacements2, nl=1)}')
 
-    # debug_staging_library('AFTER GET IDS', show_table=True)
+        staged_tasks2 = collect_files_to_process(
+            TODO_LIST_PATHS_2,
+            process_func=process_file,
+            replace_func=nested_root_path_replacer,
+            path_replacements=path_replacements2,
+            use_extra_kwargs=True,
+        )
+        seen_tasks.append(staged_tasks2)
+        execute_tasks(staged_tasks2)
 
-    # To (mostly) reuse the same functions from step 1, the replacements dict needs to be updated with
-    # id_replacements_path. It can't be replaced since it's also used to find the files (which uses the
-    # same source -> target processing/conversion as step 1). In theory this alters the process since
-    # the dict used to convert from source -> target is different, in reality, this is not an issue,
-    # since step 1 only processes the roots of the paths (which cannot be similar to anything in
-    # id_replacements_path).
-    for i, job in enumerate(TODO_LIST_ID_PATHS):
-        TODO_LIST_ID_PATHS[i]["replacements"].update(id_replacements_path)
+        # debug_staging_library('AFTER GET IDS', show_table=True)
 
-    # import ubelt as ub
-    # print(f'IDS = {ub.urepr(IDS, nl=1)}')
+        # To (mostly) reuse the same functions from step 1, the replacements dict needs to be updated with
+        # id_replacements_path. It can't be replaced since it's also used to find the files (which uses the
+        # same source -> target processing/conversion as step 1). In theory this alters the process since
+        # the dict used to convert from source -> target is different, in reality, this is not an issue,
+        # since step 1 only processes the roots of the paths (which cannot be similar to anything in
+        # id_replacements_path).
+        for i, job in enumerate(TODO_LIST_ID_PATHS):
+            TODO_LIST_ID_PATHS[i]["replacements"].update(id_replacements_path)
 
-    # Replace all paths with ids - both in the file system and within files.
-    logger.info("[white]STEP 3.1 Replace all paths with ids.")
-    logger.info(f'PATH_REPLACEMENTS={PATH_REPLACEMENTS}')
+        # import ubelt as ub
+        # print(f'IDS = {ub.urepr(IDS, nl=1)}')
 
-    # debug_staging_library('BEFORE REPLACE WITH IDS', show_table=True)
+        # Replace all paths with ids - both in the file system and within files.
+        logger.info("[white]STEP 3.1 Replace all paths with ids.")
+        logger.info(f'PATH_REPLACEMENTS={PATH_REPLACEMENTS}')
 
-    staged_tasks = collect_files_to_process(
-        TODO_LIST_ID_PATHS,
-        process_func=process_file,
-        replace_func=nested_id_path_replacer,
-        path_replacements={**PATH_REPLACEMENTS, **id_replacements_path},
-        use_extra_kwargs=True,
-    )
-    seen_tasks.append(staged_tasks)
-    execute_tasks(staged_tasks)
+        # debug_staging_library('BEFORE REPLACE WITH IDS', show_table=True)
 
-    # Clean up empty folders that may be left behind in the target directory
-    #delete_empty_folders(todo, there might be multiple target roots)
+        staged_tasks = collect_files_to_process(
+            TODO_LIST_ID_PATHS,
+            process_func=process_file,
+            replace_func=nested_id_path_replacer,
+            path_replacements={**PATH_REPLACEMENTS, **id_replacements_path},
+            use_extra_kwargs=True,
+        )
+        seen_tasks.append(staged_tasks)
+        execute_tasks(staged_tasks)
 
-    # Replace remaining ids.
-    logger.info("[white]STEP 3.2 Replace remaining ids.")
-    # debug_staging_library('AFTER REPLACE WITH IDS', show_table=True)
-    # raise Exception
-    staged_tasks = collect_files_to_process(
-        TODO_LIST_IDS,
-        process_func=partial(update_db_table_ids, IDS=IDS),
-        replace_func=None,
-        path_replacements=PATH_REPLACEMENTS,
-        use_extra_kwargs=False,
-    )
-    seen_tasks.append(staged_tasks)
-    execute_tasks(staged_tasks)
+        # Clean up empty folders that may be left behind in the target directory
+        #delete_empty_folders(todo, there might be multiple target roots)
 
-    # Finally, update the file dates in the db.
-    logger.info("[white]STEP 4. Update the file dates.")
-    update_file_dates(LIBRARY_DB_STAGING_PATH, FS_PATH_REPLACEMENTS, seen_tasks)
+        # Replace remaining ids.
+        logger.info("[white]STEP 3.2 Replace remaining ids.")
+        # debug_staging_library('AFTER REPLACE WITH IDS', show_table=True)
+        # raise Exception
+        staged_tasks = collect_files_to_process(
+            TODO_LIST_IDS,
+            process_func=partial(update_db_table_ids, IDS=IDS),
+            replace_func=None,
+            path_replacements=PATH_REPLACEMENTS,
+            use_extra_kwargs=False,
+        )
+        seen_tasks.append(staged_tasks)
+        execute_tasks(staged_tasks)
 
-    logger.info("")
-    logger.info("[green]Jellyfin Database Migration complete.")
+        # Finally, update the file dates in the db.
+        logger.info("[white]STEP 4. Update the file dates.")
+        update_file_dates(LIBRARY_DB_STAGING_PATH, FS_PATH_REPLACEMENTS, seen_tasks)
+
+        logger.info("")
+        logger.info("[green]Jellyfin Database Migration complete.")
 
 
 def debug_staging_library(name, show_table=True):

@@ -225,3 +225,98 @@ def nested_root_path_replacer(d, to_replace: dict):
         ignored += ig
         warnings += wrn
     return d, modified, ignored, warnings
+
+
+def requires_permission(config):
+    """
+    Check if we will need elevated permissions to copy some files.
+    """
+    from os import access, R_OK, X_OK
+    paths = list(config['source'].values())
+    paths = [ub.Path(p) for p in paths]
+    paths = remove_subpaths(paths)
+    class RequiresPermission(Exception):
+        ...
+    try:
+        import kwutil
+        pman = kwutil.ProgressManager()
+        with pman:
+            for dpath in pman.progiter(paths, desc='prescan paths'):
+                for r, ds, fs in dpath.walk():
+                    for fname in fs:
+                        path = r / fname
+                        if not access(path, R_OK):
+                            raise RequiresPermission
+                    if not access(r, X_OK):
+                        raise RequiresPermission
+    except RequiresPermission:
+        print('Detected that permissions will be required')
+        return True
+    else:
+        print('No eleveated permissions will be required')
+        return False
+
+
+class SudoCredentialRefresher:
+    def __init__(self, interval: float = 300.0):
+        """
+        Initialize the sudo credential refresher.
+
+        Args:
+            interval: Refresh interval in seconds (default 300 = 5 minutes)
+        """
+        import threading
+        self.interval = interval
+        self._stop_event = threading.Event()
+        self._thread = None
+
+    def _refresh_loop(self):
+        """Background thread that periodically validates sudo credentials"""
+        import subprocess
+        while not self._stop_event.wait(self.interval):
+            try:
+                subprocess.run(
+                    ['sudo', '--validate'],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+            except subprocess.CalledProcessError:
+                # If validation fails, try to re-authenticate
+                try:
+                    subprocess.run(
+                        ['sudo', '--askpass', '--validate'],
+                        check=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+                except subprocess.CalledProcessError:
+                    # If we can't re-authenticate, stop the thread
+                    self._stop_event.set()
+                    break
+
+    def start(self):
+        """Start the background refresh thread"""
+        import threading
+        if self._thread is None or not self._thread.is_alive():
+            self._stop_event.clear()
+            self._thread = threading.Thread(
+                target=self._refresh_loop,
+                daemon=True  # Thread will exit when main program exits
+            )
+            self._thread.start()
+
+    def stop(self):
+        """Stop the background refresh thread"""
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1)
+
+    def __enter__(self):
+        """Context manager entry"""
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit"""
+        self.stop()
