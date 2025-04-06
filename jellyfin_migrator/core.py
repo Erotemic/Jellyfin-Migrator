@@ -283,6 +283,8 @@ def update_xml(file: Path, replace_dict: dict, replace_func) -> None:
     WARNING: The documentation of this parser explicitly mentions that it's not hardened against
     known XML vulnerabilities. It is NOT suitable for unknown/unsafe XML files. Shouldn't be an
     issue here though.
+
+    THIS IS A SLOW FUNCTION. WE SHOULD PARALLELIZE IF POSSIBLE.
     """
     modified, ignored = 0, 0
     tree = ET.parse(file)
@@ -940,7 +942,7 @@ def setup_logger(log_file):
     logger.addHandler(file_handler)
 
 
-def setup_logger2(log_file):
+def setup_logger_threaded(log_file):
     """
     Configure the application level logger with background thread processing.
     """
@@ -1034,7 +1036,10 @@ def main(argv=True, **kwargs):
     FS_PATH_REPLACEMENTS = migration_datastructures['FS_PATH_REPLACEMENTS']
     target_data_path = config['target']['data']
 
-    setup_logger2(config.log_file)
+    if config.thread_logs:
+        setup_logger_threaded(config.log_file)
+    else:
+        setup_logger(config.log_file)
 
     logger.info("")
     logger.info('\n[white]' + escape(banner))
