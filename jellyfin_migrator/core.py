@@ -1066,6 +1066,7 @@ def main(argv=True, **kwargs):
         ub.cmd('sudo --validate')
         # Once we have them, keep refreshing them
         credential_refresher = SudoCredentialRefresher()  # NOQA
+        credential_refresher.start()
 
     ### Copy relevant files and adjust all paths to the new locations.
     logger.info("[white]STEP 1. Copy relevant files and adjust all paths to the new locations.")

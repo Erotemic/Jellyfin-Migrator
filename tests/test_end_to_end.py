@@ -253,10 +253,10 @@ def main():
     # sqlite3 /config/data/library.db "PRAGMA wal_checkpoint(FULL);"
     # sqlite3 /config/data/jellyfin.db "PRAGMA wal_checkpoint(FULL);"
 
-    import xdev
-    old = (raw_local_staging / 'config/encoding.xml').read_text()
-    new = (live_local_staging / 'config/encoding.xml').read_text()
-    print(xdev.difftext(old, new, colored=True))
+    # import xdev
+    # old = (raw_local_staging / 'config/encoding.xml').read_text()
+    # new = (live_local_staging / 'config/encoding.xml').read_text()
+    # print(xdev.difftext(old, new, colored=True))
 
     # check_main_databases(raw_local_staging )
     # check_main_databases(live_local_staging )
