@@ -53,9 +53,15 @@ try:
 except ImportError:
     raise
 
+try:
+    from line_profiler import profile
+except ImportError:
+    profile = ub.identity
+
 logger = logging.getLogger(__name__)
 
 
+@profile
 def update_db_table(
         file,
         replace_dict,
@@ -267,6 +273,7 @@ def update_db_table(
     # raise Exception
 
 
+@profile
 def update_xml(file: Path, replace_dict: dict, replace_func) -> None:
     """
     Walks through an XML file and checks *all* entries.
@@ -294,6 +301,7 @@ def update_xml(file: Path, replace_dict: dict, replace_func) -> None:
     tree.write(file)  # , encoding="utf-8")
 
 
+@profile
 def resolve_target(
         source: Path,
         target: Path,
@@ -374,6 +382,7 @@ def resolve_target(
     return original, source, staging, target, skip_copy
 
 
+@profile
 def collect_files_to_process(lst: list, process_func, replace_func, path_replacements, use_extra_kwargs):
     """
     Processes the todo_list.
@@ -475,6 +484,7 @@ def collect_files_to_process(lst: list, process_func, replace_func, path_replace
     return staged_tasks
 
 
+@profile
 def process_file(
         original: Path,
         source: Path,
@@ -562,6 +572,7 @@ def process_file(
             target.parent.mkdir(parents=True, exist_ok=True)
 
 
+@profile
 def update_db_table_ids(
         original,
         source,
@@ -655,6 +666,7 @@ def update_db_table_ids(
     logger.info(f"{updated_ids_count} IDs updated.")
 
 
+@profile
 def get_ids(LIBRARY_DB_STAGING_PATH, LIBRARY_DB_SOURCE_PATH, target_data_path):
     logger.info(f'[green] Connect to LIBRARY_DB_STAGING_PATH={LIBRARY_DB_STAGING_PATH}')
 
@@ -744,6 +756,7 @@ def get_ids(LIBRARY_DB_STAGING_PATH, LIBRARY_DB_SOURCE_PATH, target_data_path):
     return IDS
 
 
+@profile
 def update_file_dates(LIBRARY_DB_STAGING_PATH, FS_PATH_REPLACEMENTS, seen_tasks):
     logger.info("Updating file dates... Note: Reading file dates seems to be quite slow. "
                 "This will take a couple minutes")
@@ -757,8 +770,8 @@ def update_file_dates(LIBRARY_DB_STAGING_PATH, FS_PATH_REPLACEMENTS, seen_tasks)
         import ubelt as ub
         import kwutil
         target_to_staging = {r['target']: r['staging'] for r in ub.flatten(seen_tasks)}
-        logger.info(f'target_to_staging = {ub.urepr(target_to_staging, nl=1)}')
-        logger.info(f'rows = {ub.urepr(rows, nl=1)}')
+        # logger.info(f'target_to_staging = {ub.urepr(target_to_staging, nl=1)}')
+        # logger.info(f'rows = {ub.urepr(rows, nl=1)}')
         pman = kwutil.ProgressManager()
         with pman:
             for rowid, target, date_created, date_modified in pman.ProgIter(rows, desc='update dates'):
@@ -798,6 +811,7 @@ def update_file_dates(LIBRARY_DB_STAGING_PATH, FS_PATH_REPLACEMENTS, seen_tasks)
     logger.info("Done.")
 
 
+@profile
 def copy(src, dst):
     """
     copy variant that attempts to handle permission issues
@@ -812,6 +826,7 @@ def copy(src, dst):
             raise
 
 
+@profile
 def execute_tasks(staged_tasks):
     try:
         import pandas as pd
@@ -879,6 +894,7 @@ def execute_tasks(staged_tasks):
     # debug_staging_library('AFTER EXCUTE TASKS', show_table=True)
 
 
+@profile
 def setup_logger(log_file):
     """
     Configure the application level logger.
@@ -891,7 +907,9 @@ def setup_logger(log_file):
 
     logger.setLevel(logging.DEBUG)
     # Define log format with time
-    log_format = "%(asctime)s - %(levelname)s - %(message)s"
+    # log_format = "%(asctime)s - %(levelname)s - %(message)s"
+    # log_format = "%(asctime)s - %(levelname)s - %(funcName)s - %(message)s"
+    log_format = "%(asctime)s.%(msecs)03d - %(levelname)s - %(funcName)s - %(message)s"
     date_format = "%Y-%m-%d %H:%M:%S"
 
     # Console handler with Rich
@@ -908,13 +926,14 @@ def setup_logger(log_file):
     file_handler = NoRichFileHandler(log_file)
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(logging.Formatter(log_format, datefmt=date_format))
-    file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(funcName)s - %(message)s", datefmt=date_format))
+    # file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(funcName)s - %(message)s", datefmt=date_format))
 
     # Add handlers to the logger
     logger.addHandler(console_handler)
     logger.addHandler(file_handler)
 
 
+@profile
 def remove_subpaths(path_list):
     """
     Remove paths that are subdirectories of other paths in the list.
@@ -932,6 +951,7 @@ def remove_subpaths(path_list):
     return result
 
 
+@profile
 def requires_permission(config):
     """
     Check if we will need elevated permissions to copy some files.
@@ -1027,6 +1047,7 @@ class SudoCredentialRefresher:
         self.stop()
 
 
+@profile
 def main(argv=True, **kwargs):
     """
     Main entry point.
