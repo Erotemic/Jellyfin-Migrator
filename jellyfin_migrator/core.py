@@ -159,8 +159,8 @@ def update_db_table(
                     # from json.loads. Just skip them
                     data = json.loads(data)
                     data, mo, ig, wrns = replace_func(data, replace_dict)
-                    if wrns:
-                        logger.warn('[yellow]WARNING1')
+                    # if wrns:
+                    #     logger.warn('[yellow]WARNING1')
                     for warning in wrns:
                         logger.warn(warning)
                     modified += mo
@@ -170,8 +170,8 @@ def update_db_table(
                 # One could also skip the empty objects here, but recursive_path_replacer handles them
                 # just fine (leaves them untouched).
                 path, mo, ig, wrns = replace_func(path, replace_dict)
-                if wrns:
-                    logger.warn('[yellow]WARNING2')
+                # if wrns:
+                #     logger.warn('[yellow]WARNING2')
                 for warning in wrns:
                     logger.warn(warning)
                 modified += mo
@@ -198,8 +198,8 @@ def update_db_table(
                     # print(f'replace_dict={replace_dict}')
                     # path = first property
                     img_properties[0], mo, ig, wnrs = replace_func(img_properties[0], replace_dict)
-                    if wrns:
-                        logger.warn('[yellow]WARNING3')
+                    # if wrns:
+                    #     logger.warn('[yellow]WARNING3')
                     for warning in wrns:
                         logger.warn(warning)
                     # print(f'new img_properties={img_properties}')
@@ -294,8 +294,8 @@ def update_xml(file: Path, replace_dict: dict, replace_func) -> None:
         if el.tag in ("biography", "outline"):
             continue
         el.text, mo, ig, wrns = replace_func(el.text, replace_dict)
-        if wrns:
-            logger.warn('[yellow]WARNING(update_xml)')
+        # if wrns:
+        #     logger.warn('[yellow]WARNING(update_xml)')
         for warning in wrns:
             logger.warn(warning)
         modified += mo
@@ -535,8 +535,8 @@ def process_file(
         with open(staging, "r", encoding="utf-8") as f:
             path = f.read()
         new_path, modified, ignored, wrns = replace_func(path, replacements)
-        if wrns:
-            logger.warn('[yellow]WARNING(process_file.1)')
+        # if wrns:
+        #     logger.warn('[yellow]WARNING(process_file.1)')
         for warning in wrns:
             logger.warn(warning)
         logger.info(f"Processed {modified + ignored} paths, {modified} paths have been modified.")
@@ -549,8 +549,8 @@ def process_file(
         with open(staging, "r", encoding="utf-8") as f:
             j = json.load(f)
         j, modified, ignored, wrns = replace_func(j, replacements)
-        if wrns:
-            logger.warn('[yellow]WARNING(process_file.2)')
+        # if wrns:
+        #     logger.warn('[yellow]WARNING(process_file.2)')
         for warning in wrns:
             logger.warn(warning)
         logger.info(f"Processed {modified + ignored} paths, {modified} paths have been modified.")
@@ -565,8 +565,8 @@ def process_file(
         # I dont think this does anything, we can handle this elsewhere
         source = target
         target, modified, ignored, wrns = nested_id_path_replacer(source, replacements)
-        if wrns:
-            logger.warn('[yellow]WARNING(process_file.3)')
+        # if wrns:
+        #     logger.warn('[yellow]WARNING(process_file.3)')
         for warning in wrns:
             logger.warn(warning)
         if modified:
