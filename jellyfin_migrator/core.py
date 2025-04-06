@@ -16,12 +16,11 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import json
 import os
-import sys
 import sqlite3
 import xml.etree.ElementTree as ET
 
 from pathlib import Path
-from shutil import copy
+import shutil
 from time import time
 from functools import partial
 
@@ -799,6 +798,20 @@ def update_file_dates(LIBRARY_DB_STAGING_PATH, FS_PATH_REPLACEMENTS, seen_tasks)
     logger.info("Done.")
 
 
+def copy(src, dst):
+    """
+    copy variant that attempts to handle permission issues
+    """
+    try:
+        shutil.copy(src, dst)
+    except OSError:
+        # Attempt with permissions
+        if ub.POSIX:
+            ub.cmd(['sudo', 'cp', src, dst], check=True)
+        else:
+            raise
+
+
 def execute_tasks(staged_tasks):
     try:
         import pandas as pd
@@ -902,6 +915,117 @@ def setup_logger(log_file):
     logger.addHandler(file_handler)
 
 
+def remove_subpaths(path_list):
+    """
+    Remove paths that are subdirectories of other paths in the list.
+
+    Args:
+        path_list: List of path strings to process
+
+    Returns:
+        List of paths with no subpaths remaining
+    """
+    result = []
+    for path in path_list:
+        if not any(path.is_relative_to(o) for o in path_list if o != path):
+            result.append(path)
+    return result
+
+
+def requires_permission(config):
+    """
+    Check if we will need elevated permissions to copy some files.
+    """
+    from os import access, R_OK, X_OK
+    paths = list(config['source'].values())
+    paths = remove_subpaths(paths)
+    class RequiresPermission(Exception):
+        ...
+    try:
+        import kwutil
+        pman = kwutil.ProgressManager()
+        with pman:
+            for dpath in pman.progiter(paths, desc='prescan paths'):
+                for r, ds, fs in dpath.walk():
+                    for fname in fs:
+                        path = r / fname
+                        if not access(path, R_OK):
+                            raise RequiresPermission
+                    if not access(r, X_OK):
+                        raise RequiresPermission
+    except RequiresPermission:
+        print('Detected that permissions will be required')
+        return True
+    else:
+        print('No eleveated permissions will be required')
+        return False
+
+
+class SudoCredentialRefresher:
+    def __init__(self, interval: float = 300.0):
+        """
+        Initialize the sudo credential refresher.
+
+        Args:
+            interval: Refresh interval in seconds (default 300 = 5 minutes)
+        """
+        import threading
+        self.interval = interval
+        self._stop_event = threading.Event()
+        self._thread = None
+
+    def _refresh_loop(self):
+        """Background thread that periodically validates sudo credentials"""
+        import subprocess
+        while not self._stop_event.wait(self.interval):
+            try:
+                subprocess.run(
+                    ['sudo', '--validate'],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+            except subprocess.CalledProcessError:
+                # If validation fails, try to re-authenticate
+                try:
+                    subprocess.run(
+                        ['sudo', '--askpass', '--validate'],
+                        check=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+                except subprocess.CalledProcessError:
+                    # If we can't re-authenticate, stop the thread
+                    self._stop_event.set()
+                    break
+
+    def start(self):
+        """Start the background refresh thread"""
+        import threading
+        if self._thread is None or not self._thread.is_alive():
+            self._stop_event.clear()
+            self._thread = threading.Thread(
+                target=self._refresh_loop,
+                daemon=True  # Thread will exit when main program exits
+            )
+            self._thread.start()
+
+    def stop(self):
+        """Stop the background refresh thread"""
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1)
+
+    def __enter__(self):
+        """Context manager entry"""
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit"""
+        self.stop()
+
+
 def main(argv=True, **kwargs):
     """
     Main entry point.
@@ -935,6 +1059,12 @@ def main(argv=True, **kwargs):
     logger.info("Starting Jellyfin Database Migration")
     resolved_config_text = ub.urepr(config, nl=2)
     logger.info('config = ' + escape(resolved_config_text))
+
+    if requires_permission(config):
+        print('Please give us permissions')
+        ub.cmd('sudo --validate')
+        # Once we have them, keep refreshing them
+        credential_refresher = SudoCredentialRefresher()  # NOQA
 
     ### Copy relevant files and adjust all paths to the new locations.
     logger.info("[white]STEP 1. Copy relevant files and adjust all paths to the new locations.")
