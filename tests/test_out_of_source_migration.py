@@ -66,13 +66,17 @@ def test_out_of_source_migration():
               dst: /media
         '''))
 
-    from jellyfin_migrator import core
-    core.main(argv=['--config', str(config_fpath)], thread_logs=False)
-
     # Run the migrator code in our local environment
+    # from jellyfin_migrator import core
+    # core.main(argv=['--config', str(config_fpath)], thread_logs=False)
+    ub.cmd(f'python3 -m jellyfin_migrator --config {config_fpath} --thread_logs=False',
+           cwd=repo_dpath, verbose=3, system=True)
 
-    ub.cmd('python3 -m jellyfin_migrator --config /staging-e2e/apt_to_docker_config.yaml',
-           cwd='/Jellyfin-Migrator', verbose=3, system=True, exec_args='-it')
+    """
+
+    LINE_PROFILE=1 python3 -m jellyfin_migrator --config $HOME/.cache/jellyfin-migrator/tests/oos/apt_to_docker_config.yaml --thread_logs=False
+
+    """
 
     # Create two variants of the staging directory for debugging
     live_local_staging = (dpath / 'staging-live')

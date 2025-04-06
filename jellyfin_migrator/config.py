@@ -132,6 +132,8 @@ class JellyfinMigratorConfig(scfg.DataConfig):
 
     thread_logs = scfg.Value(True, help='if False, emit logs in serial. Useful for debugging, but slower')
 
+    debug_path = scfg.Value(None, help='directory for debug info')
+
     # TODO: we could probably infer a reasonable default for this by reading
     # where the media libraries are in the original location, and then assuming
     # they will go into similar locations in the destination.

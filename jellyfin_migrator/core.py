@@ -1022,6 +1022,7 @@ def main(argv=True, **kwargs):
     Parse arguments, read configuration, prepare migration, copy migratable
     data to a staging directory.
     """
+    import pickle
     from jellyfin_migrator import config as config_mod
     config = config_mod.JellyfinMigratorConfig.cli(argv=argv, data=kwargs, strict=True)
     import rich
@@ -1045,6 +1046,9 @@ def main(argv=True, **kwargs):
         setup_logger_threaded(config.log_file)
     else:
         setup_logger(config.log_file)
+
+    if config.debug_path is not None:
+        config.debug_path = ub.Path(config.debug_path).ensuredir()
 
     logger.info("")
     logger.info('\n[white]' + escape(banner))
@@ -1143,11 +1147,18 @@ def main(argv=True, **kwargs):
 
         # import ubelt as ub
         # print(f'IDS = {ub.urepr(IDS, nl=1)}')
+        if config.debug_path is not None:
+            step3_dpath = (config.debug_path / 'before_step3').ensuredir()
+            with open(step3_dpath / 'PATH_REPLACEMENTS.pkl') as f:
+                pickle.dump(PATH_REPLACEMENTS, f)
+            with open(step3_dpath / 'id_replacements_path.pkl') as f:
+                pickle.dump(id_replacements_path, f)
+            with open(step3_dpath / 'TODO_LIST_ID_PATHS.pkl') as f:
+                pickle.dump(TODO_LIST_ID_PATHS, f)
 
         # Replace all paths with ids - both in the file system and within files.
         logger.info("[white]STEP 3.1 Replace all paths with ids.")
-        logger.info(f'PATH_REPLACEMENTS={PATH_REPLACEMENTS}')
-
+        # logger.info(f'PATH_REPLACEMENTS={PATH_REPLACEMENTS}')
         # debug_staging_library('BEFORE REPLACE WITH IDS', show_table=True)
 
         staged_tasks = collect_files_to_process(
@@ -1176,6 +1187,15 @@ def main(argv=True, **kwargs):
         )
         seen_tasks.append(staged_tasks)
         execute_tasks(staged_tasks)
+
+        if config.debug_path is not None:
+            step4_dpath = (config.debug_path / 'before_step4').ensuredir()
+            with open(step4_dpath / 'LIBRARY_DB_STAGING_PATH.pkl') as f:
+                pickle.dump(LIBRARY_DB_STAGING_PATH, f)
+            with open(step4_dpath / 'FS_PATH_REPLACEMENTS.pkl') as f:
+                pickle.dump(FS_PATH_REPLACEMENTS, f)
+            with open(step4_dpath / 'seen_tasks.pkl') as f:
+                pickle.dump(seen_tasks, f)
 
         # Finally, update the file dates in the db.
         logger.info("[white]STEP 4. Update the file dates.")

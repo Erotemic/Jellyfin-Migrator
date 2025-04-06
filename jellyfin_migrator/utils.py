@@ -165,6 +165,9 @@ def delete_empty_folders(dir: str):
 @profile
 def _single_file_path_replacer(d, to_replace: dict):
     r"""
+    NOTE:
+        This is one of the slowest functions in the codebase.
+
     Example:
         >>> from jellyfin_migrator.utils import _single_file_path_replacer
         >>> d = "/home/user/docs/file.txt"
@@ -177,6 +180,36 @@ def _single_file_path_replacer(d, to_replace: dict):
         >>>     "target_path_slash": "/",  # Force POSIX style
         >>> }
         >>> _single_file_path_replacer(d, to_replace)
+
+    Ignore:
+        import timerit
+        import pathlib
+
+        strpath1 = '/xyz/abc/ffy/fds'
+        strpath2 = '/xyz/abc'
+
+        path1 = pathlib.Path(strpath1)
+        path2 = pathlib.Path(strpath2)
+
+        purepath1 = pathlib.PurePath(strpath1)
+        purepath2 = pathlib.PurePath(strpath2)
+
+        ti = timerit.Timerit(1000, bestof=10, verbose=2)
+        for timer in ti.reset('arg is str'):
+            with timer:
+                path1.is_relative_to(strpath2)
+
+        for timer in ti.reset('arg is path'):
+            with timer:
+                path1.is_relative_to(path2)
+
+        for timer in ti.reset('purepath'):
+            with timer:
+                purepath1.is_relative_to(purepath2)
+
+        for timer in ti.reset('strpath hack'):
+            with timer:
+                strpath1.startswith(strpath2 + '/')
 
     Ignore:
         import xdev
