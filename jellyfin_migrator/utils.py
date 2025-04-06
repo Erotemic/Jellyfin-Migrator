@@ -227,11 +227,29 @@ def nested_root_path_replacer(d, to_replace: dict):
     return d, modified, ignored, warnings
 
 
+def remove_subpaths(path_list):
+    """
+    Remove paths that are subdirectories of other paths in the list.
+
+    Args:
+        path_list: List of path strings to process
+
+    Returns:
+        List of paths with no subpaths remaining
+    """
+    result = []
+    for path in path_list:
+        if not any(path.is_relative_to(o) for o in path_list if o != path):
+            result.append(path)
+    return result
+
+
 def requires_permission(config):
     """
     Check if we will need elevated permissions to copy some files.
     """
     from os import access, R_OK, X_OK
+    import ubelt as ub
     paths = list(config['source'].values())
     paths = [ub.Path(p) for p in paths]
     paths = remove_subpaths(paths)

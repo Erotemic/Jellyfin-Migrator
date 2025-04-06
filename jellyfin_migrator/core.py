@@ -1008,24 +1008,6 @@ def setup_logger2(log_file):
 
 
 @profile
-def remove_subpaths(path_list):
-    """
-    Remove paths that are subdirectories of other paths in the list.
-
-    Args:
-        path_list: List of path strings to process
-
-    Returns:
-        List of paths with no subpaths remaining
-    """
-    result = []
-    for path in path_list:
-        if not any(path.is_relative_to(o) for o in path_list if o != path):
-            result.append(path)
-    return result
-
-
-@profile
 def main(argv=True, **kwargs):
     """
     Main entry point.
