@@ -1050,7 +1050,7 @@ def main(argv=True, **kwargs):
             provide permission to this script, or modify the permissions so
             this script can read the files in the source directories
             '''))
-        ub.cmd('sudo --validate')
+        ub.cmd('sudo --validate', verbose=3)
         # Once we have them, keep refreshing them
         credential_refresher = SudoCredentialRefresher()  # NOQA
         credential_refresher.start()

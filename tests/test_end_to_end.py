@@ -27,17 +27,15 @@ def setup_original_container(repo_dpath):
     apt_variant.start()
     apt_variant.connect()
     apt_variant.call(['python3', '--version'])
+    apt_variant.exec('/usr/bin/jellyfin --version', verbose=3, check=False)
     # Run the migrator (with exec for stderr)
-    _ = apt_variant.exec('apt update', verbose=3)
-    _ = apt_variant.exec('apt install python3-pip fd-find tree psmisc sqlite3  --yes', verbose=3)
-    _ = apt_variant.exec('pip install pandas ubelt rich kwutil networkx scriptconfig', verbose=3)
+    # _ = apt_variant.exec('apt update', verbose=3)
+    # _ = apt_variant.exec('apt install python3-pip fd-find tree psmisc sqlite3  --yes', verbose=3)
+    # _ = apt_variant.exec('pip install pandas ubelt rich kwutil networkx scriptconfig', verbose=3)
 
     # TODO: you might need to actually do something in the jellyfin server to
     # get it to populate jellyfin.db, otherwise maybe it is empty and this
     # fails?
-    port = apt_variant.port
-    username = 'jellyfin-user'
-    password = 'jellyfin-pass'
     # Create a client to perform some initial configuration.
     from jellyfin_apiclient_python import JellyfinClient
     client = JellyfinClient()
@@ -48,9 +46,9 @@ def setup_original_container(repo_dpath):
         device_name='machine_name',
         device_id='unique_id')
     client.config.data["auth.ssl"] = True
-    url = f'{url}:{port}'
+    url = f'{url}:{apt_variant.port}'
     client.auth.connect_to_address(url)
-    client.auth.login(url, username, password)
+    client.auth.login(url, apt_variant.username, apt_variant.password)
 
     client.jellyfin.get_users()
     client.jellyfin.get_media_folders()
@@ -87,10 +85,7 @@ def setup_original_container(repo_dpath):
     # Verify that jellyfin.db has data in it
     _ = apt_variant.exec('du /root/.local/share/jellyfin/data/jellyfin.db', verbose=3)
     _ = apt_variant.exec('ls -al /root/.local/share/jellyfin/data/jellyfin.db', verbose=3)
-
-    USER_INTERACTIVE = 0
-    if USER_INTERACTIVE:
-        selenium_login("http://localhost:8098/")
+    _ = apt_variant.exec('ls -al /root/.local/share/jellyfin/data', verbose=3)
 
     # Delete any previous migration data.
     apt_variant.start()
@@ -124,9 +119,17 @@ def setup_target_container(repo_dpath, live_local_staging):
     except Exception:
         ...
     docker_variant.ensure()
-    docker_variant.exec('apt update', verbose=3)
-    docker_variant.exec('apt install rsync sqlite3 python3 python3-pip --yes', verbose=3)
-    docker_variant.exec('python3 -m pip install --break-system-packages pandas ubelt rich kwutil networkx scriptconfig xmltodict', verbose=3)
+
+    if 0:
+        docker_variant.exec('apt update', verbose=3)
+        docker_variant.exec('apt install rsync sqlite3 python3 python3-pip --yes', verbose=3)
+        docker_variant.exec('python3 -m pip install --break-system-packages pandas ubelt rich kwutil networkx scriptconfig xmltodict', verbose=3)
+    else:
+        import time
+        print("wait a sec, the initial run of jellyfin will need a small bit of time to startup.")
+        print("TODO: can we query for when this is done?")
+        time.sleep(5)
+
     # docker_variant.exec('du /config/data/jellyfin.db', verbose=3)
     # docker_variant.exec('sha1sum /config/data/jellyfin.db', verbose=3)
     # docker_variant.exec('sha1sum /config/data/library.db', verbose=3)
@@ -155,6 +158,10 @@ def main():
     ####
     ####
     apt_variant = setup_original_container(repo_dpath)
+
+    USER_INTERACTIVE = 0
+    if USER_INTERACTIVE:
+        selenium_login("http://localhost:8098/")
 
     ####
     ####
@@ -199,14 +206,15 @@ def main():
     apt_variant.copy_out('staging-e2e', to_path=raw_local_staging)
     raw_local_staging.copy(live_local_staging)
 
-    from jellyfin_migrator.debug_tools import check_main_databases
-    check_main_databases(raw_local_staging)
-    check_main_databases(raw_local_staging, include='TypedBaseItems')
+    if 1:
+        from jellyfin_migrator.debug_tools import check_main_databases
+        check_main_databases(raw_local_staging)
+        check_main_databases(raw_local_staging, include='TypedBaseItems')
 
-    hashes1 = {p.relative_to(raw_local_staging): ub.hash_file(p) for p in sorted(raw_local_staging.glob('**')) if p.is_file()}
-    hashes2 = {p.relative_to(live_local_staging): ub.hash_file(p) for p in sorted(live_local_staging.glob('**')) if p.is_file()}
-    difference = ub.IndexableWalker(hashes1).diff(hashes2)
-    assert difference['similarity'] == 1
+        hashes1 = {p.relative_to(raw_local_staging): ub.hash_file(p) for p in sorted(raw_local_staging.glob('**')) if p.is_file()}
+        hashes2 = {p.relative_to(live_local_staging): ub.hash_file(p) for p in sorted(live_local_staging.glob('**')) if p.is_file()}
+        difference = ub.IndexableWalker(hashes1).diff(hashes2)
+        assert difference['similarity'] == 1
 
     ####
     ####
@@ -230,7 +238,7 @@ def main():
     client.auth.connect_to_address(url)
     client.auth.login(url, username, password)
     items = client.jellyfin.search_media_items()['Items']
-    print(f'items = {ub.urepr(items, nl=1)}')
+    print(f'items = {ub.urepr(items, nl=2)}')
     assert len(items) == 7
     for item in items:
         if 'Popeye' in item['Name']:
@@ -244,72 +252,73 @@ def main():
     if USER_INTERACTIVE:
         selenium_login("http://localhost:8097/")
 
-    hashes1 = {p.relative_to(raw_local_staging): ub.hash_file(p) for p in sorted(raw_local_staging.glob('**')) if p.is_file()}
-    hashes2 = {p.relative_to(live_local_staging): ub.hash_file(p) for p in sorted(live_local_staging.glob('**')) if p.is_file()}
-    difference = ub.IndexableWalker(hashes1).diff(hashes2)
-    print(f'difference = {ub.urepr(difference, nl=-1)}')
+    if 0:
+        hashes1 = {p.relative_to(raw_local_staging): ub.hash_file(p) for p in sorted(raw_local_staging.glob('**')) if p.is_file()}
+        hashes2 = {p.relative_to(live_local_staging): ub.hash_file(p) for p in sorted(live_local_staging.glob('**')) if p.is_file()}
+        difference = ub.IndexableWalker(hashes1).diff(hashes2)
+        print(f'difference = {ub.urepr(difference, nl=-1)}')
 
-    # Force the database to update itself
-    # sqlite3 /config/data/library.db "PRAGMA wal_checkpoint(FULL);"
-    # sqlite3 /config/data/jellyfin.db "PRAGMA wal_checkpoint(FULL);"
+        # Force the database to update itself
+        # sqlite3 /config/data/library.db "PRAGMA wal_checkpoint(FULL);"
+        # sqlite3 /config/data/jellyfin.db "PRAGMA wal_checkpoint(FULL);"
 
-    # import xdev
-    # old = (raw_local_staging / 'config/encoding.xml').read_text()
-    # new = (live_local_staging / 'config/encoding.xml').read_text()
-    # print(xdev.difftext(old, new, colored=True))
+        # import xdev
+        # old = (raw_local_staging / 'config/encoding.xml').read_text()
+        # new = (live_local_staging / 'config/encoding.xml').read_text()
+        # print(xdev.difftext(old, new, colored=True))
 
-    # check_main_databases(raw_local_staging )
-    # check_main_databases(live_local_staging )
+        # check_main_databases(raw_local_staging )
+        # check_main_databases(live_local_staging )
 
-    # _ = apt_variant.exec(ub.codeblock(
-    #     r'''
-    #     python3 -m jellyfin_migrator.id_scanner \
-    #         --library-db /config/data/library.db \
-    #         --scan-db /config/data/library.db
-    #     '''), cwd='/Jellyfin-Migrator', verbose=3, system=True, exec_args='-it')
+        # _ = apt_variant.exec(ub.codeblock(
+        #     r'''
+        #     python3 -m jellyfin_migrator.id_scanner \
+        #         --library-db /config/data/library.db \
+        #         --scan-db /config/data/library.db
+        #     '''), cwd='/Jellyfin-Migrator', verbose=3, system=True, exec_args='-it')
 
-    _ = docker_variant.exec(ub.codeblock(
-        r'''
-        sqlite3 /config/data/library.db "PRAGMA wal_checkpoint(FULL);"
-        '''), cwd='/Jellyfin-Migrator', verbose=3, system=True, exec_args='-it')
-    _ = docker_variant.exec(ub.codeblock(
-        r'''
-        python3 -m jellyfin_migrator.debug_tools /config
-        '''), cwd='/Jellyfin-Migrator', verbose=3, system=True, exec_args='-it')
+        _ = docker_variant.exec(ub.codeblock(
+            r'''
+            sqlite3 /config/data/library.db "PRAGMA wal_checkpoint(FULL);"
+            '''), cwd='/Jellyfin-Migrator', verbose=3, system=True, exec_args='-it')
+        _ = docker_variant.exec(ub.codeblock(
+            r'''
+            python3 -m jellyfin_migrator.debug_tools /config
+            '''), cwd='/Jellyfin-Migrator', verbose=3, system=True, exec_args='-it')
 
-    # print(f'docker_variant.name={docker_variant.name}')
-    # docker_variant.exec('rm -rf /staging')
-    # docker_variant.copy_into(local_staging, '/staging')
-    # docker_variant.exec('ls /', verbose=3)
-    # docker_variant.exec('chmod +x /staging/accept.sh', verbose=3)
-    # docker_variant.exec('cat /staging/accept.sh', verbose=3)
-    # docker_variant.exec('sha1sum /staging/data/jellyfin.db', verbose=3)
-    # docker_variant.exec('sha1sum /config/data/jellyfin.db', verbose=3)
-    # docker_variant.exec('ls -al /staging/data/jellyfin.db', verbose=3)
-    # docker_variant.exec('ls -al /config/data/jellyfin.db', verbose=3)
-    # docker_variant.exec('sqlite3 /', verbose=3)
+        # print(f'docker_variant.name={docker_variant.name}')
+        # docker_variant.exec('rm -rf /staging')
+        # docker_variant.copy_into(local_staging, '/staging')
+        # docker_variant.exec('ls /', verbose=3)
+        # docker_variant.exec('chmod +x /staging/accept.sh', verbose=3)
+        # docker_variant.exec('cat /staging/accept.sh', verbose=3)
+        # docker_variant.exec('sha1sum /staging/data/jellyfin.db', verbose=3)
+        # docker_variant.exec('sha1sum /config/data/jellyfin.db', verbose=3)
+        # docker_variant.exec('ls -al /staging/data/jellyfin.db', verbose=3)
+        # docker_variant.exec('ls -al /config/data/jellyfin.db', verbose=3)
+        # docker_variant.exec('sqlite3 /', verbose=3)
 
-    # TODO:
-    # Ensure that we are expecting media to live in /media in the docker
-    # container instead of /data/jellyfin/media, which is where it lives
-    # outside of the docker container.
+        # TODO:
+        # Ensure that we are expecting media to live in /media in the docker
+        # container instead of /data/jellyfin/media, which is where it lives
+        # outside of the docker container.
 
-    # docker_variant.exec('./accept.sh', cwd='/staging', verbose=3)
-    # print(f'apt_variant.name={apt_variant.name}')
+        # docker_variant.exec('./accept.sh', cwd='/staging', verbose=3)
+        # print(f'apt_variant.name={apt_variant.name}')
 
-    # Ok, this isn't working why?
-    # We can't login. Are we not copying the user credentials over?
-    # Let's check that first.
+        # Ok, this isn't working why?
+        # We can't login. Are we not copying the user credentials over?
+        # Let's check that first.
 
-    from jellyfin_migrator.debug_tools import check_main_databases
-    check_main_databases(raw_local_staging, include='TypedBaseItems')
+        from jellyfin_migrator.debug_tools import check_main_databases
+        check_main_databases(raw_local_staging, include='TypedBaseItems')
 
-    check_main_databases(live_local_staging, include='TypedBaseItems')
+        check_main_databases(live_local_staging, include='TypedBaseItems')
 
-    apt_variant.exec(ub.codeblock(
-        r'''
-        python3 -m jellyfin_migrator.debug_tools /root/.local/share/jellyfin --include TypedBaseItems
-        '''), cwd='/Jellyfin-Migrator', verbose=3, system=True, exec_args='-it')
+        apt_variant.exec(ub.codeblock(
+            r'''
+            python3 -m jellyfin_migrator.debug_tools /root/.local/share/jellyfin --include TypedBaseItems
+            '''), cwd='/Jellyfin-Migrator', verbose=3, system=True, exec_args='-it')
 
 
 def selenium_login(url):

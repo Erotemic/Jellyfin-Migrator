@@ -424,7 +424,7 @@ class OCIContainer:
 
         return [PurePosixPath(p) for p in path_strings]
 
-    def exec(self, command, cwd=None, verbose=0, system=False, exec_args=None):
+    def exec(self, command, cwd=None, verbose=0, system=False, exec_args=None, check=True):
         """
         Variant of call that uses a separte process to execute a command.
 
@@ -437,9 +437,9 @@ class OCIContainer:
         if exec_args is None:
             exec_args = ''
         if cwd is None:
-            return self.engine_cmd(f'exec {exec_args} {self.name} {command}', verbose=verbose, system=system)
+            return self.engine_cmd(f'exec {exec_args} {self.name} {command}', verbose=verbose, system=system, check=check)
         else:
-            return self.engine_cmd(f'exec {exec_args} --workdir {cwd} {self.name} {command}', verbose=verbose, system=system)
+            return self.engine_cmd(f'exec {exec_args} --workdir {cwd} {self.name} {command}', verbose=verbose, system=system, check=check)
 
     def call(
         self,

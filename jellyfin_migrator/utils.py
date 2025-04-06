@@ -2,6 +2,7 @@ from string import ascii_letters
 import datetime
 import hashlib
 import pathlib
+from collections import deque
 from pathlib import Path
 
 
@@ -163,8 +164,30 @@ def delete_empty_folders(dir: str):
 
 @profile
 def _single_file_path_replacer(d, to_replace: dict):
+    r"""
+    Example:
+        >>> from jellyfin_migrator.utils import _single_file_path_replacer
+        >>> d = "/home/user/docs/file.txt"
+        >>> # Create replacement dictionary
+        >>> to_replace = {
+        >>>     "/home/user": "/new/userhome",
+        >>>     "C:\\Users": "D:\\Data",
+        >>>     "/mnt/vol1": "/storage",
+        >>>     "/usr": "/opt",
+        >>>     "target_path_slash": "/",  # Force POSIX style
+        >>> }
+        >>> _single_file_path_replacer(d, to_replace)
+
+    Ignore:
+        import xdev
+        xdev.profile_now(_single_file_path_replacer)(d, to_replace)
+    """
     modified, ignored = 0, 0
     warnings = []
+
+    target_slash = to_replace.get("target_path_slash", "/")
+    needs_slash_replace = target_slash != '/'
+
     try:
         p = Path(d)
     except Exception:
@@ -183,7 +206,9 @@ def _single_file_path_replacer(d, to_replace: dict):
                 # \ paths anyways.
                 # p.as_posix() makes sure that we always get a string with "/". Otherwise, on windows,
                 # str(p) would automatically return "\" paths.
-                d = p.as_posix().replace("/", to_replace["target_path_slash"])
+                d = p.as_posix()
+                if needs_slash_replace:
+                    d = d.replace("/", target_slash)
                 found = True
                 break
         if found:
@@ -204,7 +229,7 @@ def _single_file_path_replacer(d, to_replace: dict):
 
 
 @profile
-def nested_root_path_replacer(d, to_replace: dict):
+def nested_root_path_replacer_recursive(d, to_replace: dict):
     """
     Recursively replace all paths in "d" which can be
      * a path object
@@ -215,7 +240,6 @@ def nested_root_path_replacer(d, to_replace: dict):
      * anything else is returned unmodified.
     Returns the (un)modified object as well as how many items have been modified or ignored.
     """
-    import pathlib
     # TODO: would likely be much faster with IndexableWalker
     modified, ignored = 0, 0
     warnings = []
@@ -237,6 +261,92 @@ def nested_root_path_replacer(d, to_replace: dict):
         ignored += ig
         warnings += wrn
     return d, modified, ignored, warnings
+
+
+@profile
+def nested_root_path_replacer_iterative(d, to_replace: dict):
+    r"""
+    Iteratively replace all paths in "d" which can be:
+     * a path object
+     * a string
+     * a dictionary (only values are checked, no keys)
+     * a list
+     * any nested structure of the above.
+     * anything else is returned unmodified.
+    Returns the (un)modified object as well as how many items have been modified or ignored.
+
+    Example:
+        >>> # Replacement rules
+        >>> to_replace = {
+        >>>     "/old/path": "/new/path",
+        >>>     "C:\\OldDir": "D:\\NewDir",
+        >>>     "/home/user": "/new/home",
+        >>>     "target_path_slash": "/",  # Force POSIX-style paths
+        >>> }
+        >>> #
+        >>> # Test input data (nested structure)
+        >>> test_data = {
+        >>>     "top_level_file": "/old/path/file.txt",
+        >>>     "subdir": {
+        >>>         "windows_file": "C:\\OldDir\\doc.docx",
+        >>>         "mixed_list": [
+        >>>             "/home/user/pictures/img1.jpg",
+        >>>             "C:\\OldDir\\notes.txt",
+        >>>             {"config": "/old/path/config.json"}
+        >>>         ],
+        >>>         "non_path_data": {
+        >>>             "text": "This shouldn't be modified",
+        >>>             "number": 42
+        >>>         }
+        >>>     },
+        >>>     "ignore_me": "https://example.com/file.zip"  # Should be ignored
+        >>> }
+        >>> result1, modified, ignored, warnings = nested_root_path_replacer(
+        >>>     test_data.copy(),  # Use copy to preserve original
+        >>>     to_replace
+        >>> )
+        >>> result2, modified, ignored, warnings = nested_root_path_replacer_recursive(
+        >>>     test_data.copy(),  # Use copy to preserve original
+        >>>     to_replace
+        >>> )
+        >>> assert result1 == result2
+    """
+    modified, ignored = 0, 0
+    warnings = []
+    stack = deque()
+    result = d  # Will hold our final modified value
+
+    # Stack contains (value, parent, key/index, is_root) tuples
+    stack.append((d, None, None, True))
+
+    while stack:
+        current, parent, key_or_index, is_root = stack.pop()
+
+        if isinstance(current, dict):
+            for k, v in current.items():
+                stack.append((v, current, k, False))
+        elif isinstance(current, list):
+            for idx, elem in enumerate(current):
+                stack.append((elem, current, idx, False))
+        elif isinstance(current, (str, pathlib.PurePath)):
+            new_val, mo, ig, wrn = _single_file_path_replacer(current, to_replace)
+            modified += mo
+            ignored += ig
+            warnings.extend(wrn)
+
+            if mo > 0:
+                if is_root:
+                    result = new_val  # Update root result
+                elif isinstance(parent, dict):
+                    parent[key_or_index] = new_val
+                elif isinstance(parent, list):
+                    parent[key_or_index] = new_val
+
+    return result, modified, ignored, warnings
+
+
+# nested_root_path_replacer = nested_root_path_replacer_recursive
+nested_root_path_replacer = nested_root_path_replacer_iterative
 
 
 @profile

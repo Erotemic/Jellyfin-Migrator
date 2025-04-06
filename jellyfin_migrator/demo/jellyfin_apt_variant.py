@@ -35,6 +35,8 @@ class JellyfinAptContainer(OCIContainer):
         # cleaned up. We should put the setup file into a standalone docker
         # file and just build it. But this requires some special handling
         # so we can auto-initialize the server credentials.
+        self.username = 'jellyfin-user'
+        self.password = 'jellyfin-pass'
         self.base_image = 'ubuntu:22.04'
         container_name = 'jellyfin_demo_apt_variant'
         self.cached_image = 'jellyfin_demo_apt_image'
@@ -163,9 +165,8 @@ class JellyfinAptContainer(OCIContainer):
         if DEV_GOODIES:
             setupscript_text += '\n' + ub.codeblock(
                 '''
-                apt install python3-pip --yes
-                apt install fd-find tree --yes
-                pip install pandas ubelt rich kwutil networkx
+                apt install python3-pip fd-find tree psmisc sqlite3 --yes
+                pip install pandas ubelt rich kwutil networkx scriptconfig
                 ''')
 
         # TODO:
@@ -193,8 +194,8 @@ class JellyfinAptContainer(OCIContainer):
         # Initialize the server with a user/pass: jellyfin-user/jellyfin-pass
         print('Configuring server')
         initializer = JellyfinInitializer(port=self.port,
-                                          username='jellyfin-user',
-                                          password='jellyfin-pass')
+                                          username=self.username,
+                                          password=self.password)
 
         initializer.configure_initial_server()
 
