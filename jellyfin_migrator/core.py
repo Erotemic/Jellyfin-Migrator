@@ -902,6 +902,10 @@ def setup_logger(log_file):
     from rich.logging import RichHandler
     from rich.markup import render
 
+    log_fpath = ub.Path(log_file)
+    if not log_fpath.parent.exists():
+        raise Exception('Log directory does not exist')
+
     def strip_rich_markup(message: str) -> str:
         return str(render(message))
 
@@ -1083,7 +1087,12 @@ def main(argv=True, **kwargs):
     logger.info('config = ' + escape(resolved_config_text))
 
     if requires_permission(config):
-        print('Please give us permissions')
+        logger.info(ub.paragraph(
+            '''
+            Permission will be required to read database files. To continue
+            provide permission to this script, or modify the permissions so
+            this script can read the files in the source directories
+            '''))
         ub.cmd('sudo --validate')
         # Once we have them, keep refreshing them
         credential_refresher = SudoCredentialRefresher()  # NOQA
