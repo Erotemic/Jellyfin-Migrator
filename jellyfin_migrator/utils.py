@@ -5,6 +5,12 @@ import pathlib
 from pathlib import Path
 
 
+try:
+    from line_profiler import profile
+except ImportError:
+    from ubelt import identity as profile
+
+
 def get_dotnet_MD5(s: str):
     """
     Note: The .NET .Unicode method encodes as UTF16 little endian:
@@ -13,6 +19,7 @@ def get_dotnet_MD5(s: str):
     return hashlib.md5(s.encode("utf-16-le")).digest()
 
 
+@profile
 def nested_id_path_replacer(d, to_replace: dict):
     """
     Almost the same as nested_root_path_replacer but for replacing id parts somewhere in
@@ -99,6 +106,7 @@ def nested_id_path_replacer(d, to_replace: dict):
     return d, modified, ignored, warnings
 
 
+@profile
 def jf_date_str_to_python_ns(s: str):
     # Python datetime has only support for microseconds because of resolution
     # problems. To convert from a date+time to ticks, the fractional seconds
@@ -121,6 +129,7 @@ def jf_date_str_to_python_ns(s: str):
     return t
 
 
+@profile
 def get_datestr_from_python_time_ns(time_ns: int):
     """
     Convert a _python_ timestamp (float seconds since epoch, which is os dependent)
@@ -139,6 +148,7 @@ def get_datestr_from_python_time_ns(time_ns: int):
     return timestamp
 
 
+@profile
 def delete_empty_folders(dir: str):
     dir = Path(dir)
 
@@ -151,6 +161,7 @@ def delete_empty_folders(dir: str):
                 done = False
 
 
+@profile
 def _single_file_path_replacer(d, to_replace: dict):
     modified, ignored = 0, 0
     warnings = []
@@ -192,6 +203,7 @@ def _single_file_path_replacer(d, to_replace: dict):
     return d, modified, ignored, warnings
 
 
+@profile
 def nested_root_path_replacer(d, to_replace: dict):
     """
     Recursively replace all paths in "d" which can be
@@ -227,6 +239,7 @@ def nested_root_path_replacer(d, to_replace: dict):
     return d, modified, ignored, warnings
 
 
+@profile
 def remove_subpaths(path_list):
     """
     Remove paths that are subdirectories of other paths in the list.
@@ -244,6 +257,7 @@ def remove_subpaths(path_list):
     return result
 
 
+@profile
 def requires_permission(config):
     """
     Check if we will need elevated permissions to copy some files.
