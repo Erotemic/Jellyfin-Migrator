@@ -801,8 +801,17 @@ def update_file_dates(LIBRARY_DB_STAGING_PATH, FS_PATH_REPLACEMENTS, seen_tasks)
                     logger.warn(f"[yellow]File doesn't seem to exist; can't update its dates in the database: {staging!r}")
                     continue
 
-                date_created_ns  = jf_date_str_to_python_ns(date_created)
-                date_modified_ns = jf_date_str_to_python_ns(date_modified)
+                try:
+                    date_created_ns  = jf_date_str_to_python_ns(date_created)
+                except Exception as ex:
+                    logger.error(str(ex))
+                    date_created_ns = -1
+
+                try:
+                    date_modified_ns = jf_date_str_to_python_ns(date_modified)
+                except Exception as ex:
+                    logger.error(str(ex))
+                    date_modified_ns = -1
 
                 if date_created_ns >= 0 and date_modified_ns >= 0:
                     continue

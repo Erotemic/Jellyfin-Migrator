@@ -109,6 +109,10 @@ def nested_id_path_replacer(d, to_replace: dict):
 
 @profile
 def jf_date_str_to_python_ns(s: str):
+    """
+    Fixme:
+        ValueError: Invalid isoformat string: '0001-01-01 00:00:00Z+00:00'
+    """
     # Python datetime has only support for microseconds because of resolution
     # problems. To convert from a date+time to ticks, the fractional seconds
     # part doesn't matter anyway (it remains the same). Hence, it's cut off
