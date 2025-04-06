@@ -938,6 +938,7 @@ def requires_permission(config):
     """
     from os import access, R_OK, X_OK
     paths = list(config['source'].values())
+    paths = [ub.Path(p) for p in paths]
     paths = remove_subpaths(paths)
     class RequiresPermission(Exception):
         ...
