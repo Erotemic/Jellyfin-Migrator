@@ -1158,11 +1158,11 @@ def main(argv=True, **kwargs):
         # print(f'IDS = {ub.urepr(IDS, nl=1)}')
         if config.debug_path is not None:
             step3_dpath = (config.debug_path / 'before_step3').ensuredir()
-            with open(step3_dpath / 'PATH_REPLACEMENTS.pkl') as f:
+            with open(step3_dpath / 'PATH_REPLACEMENTS.pkl', 'wb') as f:
                 pickle.dump(PATH_REPLACEMENTS, f)
-            with open(step3_dpath / 'id_replacements_path.pkl') as f:
+            with open(step3_dpath / 'id_replacements_path.pkl', 'wb') as f:
                 pickle.dump(id_replacements_path, f)
-            with open(step3_dpath / 'TODO_LIST_ID_PATHS.pkl') as f:
+            with open(step3_dpath / 'TODO_LIST_ID_PATHS.pkl', 'wb') as f:
                 pickle.dump(TODO_LIST_ID_PATHS, f)
 
         # Replace all paths with ids - both in the file system and within files.
@@ -1199,11 +1199,11 @@ def main(argv=True, **kwargs):
 
         if config.debug_path is not None:
             step4_dpath = (config.debug_path / 'before_step4').ensuredir()
-            with open(step4_dpath / 'LIBRARY_DB_STAGING_PATH.pkl') as f:
+            with open(step4_dpath / 'LIBRARY_DB_STAGING_PATH.pkl', 'wb') as f:
                 pickle.dump(LIBRARY_DB_STAGING_PATH, f)
-            with open(step4_dpath / 'FS_PATH_REPLACEMENTS.pkl') as f:
+            with open(step4_dpath / 'FS_PATH_REPLACEMENTS.pkl', 'wb') as f:
                 pickle.dump(FS_PATH_REPLACEMENTS, f)
-            with open(step4_dpath / 'seen_tasks.pkl') as f:
+            with open(step4_dpath / 'seen_tasks.pkl', 'wb') as f:
                 pickle.dump(seen_tasks, f)
 
         # Finally, update the file dates in the db.
