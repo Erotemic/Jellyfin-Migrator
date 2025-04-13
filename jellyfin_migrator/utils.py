@@ -257,8 +257,7 @@ def _single_file_path_replacer(d, to_replace: dict):
             # after all only to give you a hint whether you missed a path.
             # Also exclude URLs. Btw: pathlib can be quite handy for messing with URLs.
             if len(p.parents) > 1 \
-                    and not str(d).startswith("https:") \
-                    and not str(d).startswith("http:") \
+                    and not str(d).startswith(("https:", "http:")) \
                     and not to_replace.get("log_no_warnings", False):
                 warnings.append(f"No entry for this (presumed) path: {d}")
                 # print_log(f"No entry for this (presumed) path: {d}")
@@ -499,3 +498,28 @@ class SudoCredentialRefresher:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit"""
         self.stop()
+
+
+def LogProgIter(iterable, logger, **kwargs):
+    import ubelt as ub
+
+    defaults = ub.udict({
+        'verbose': 3,
+        'adjust': 0,
+        'freq': 1,
+        'time_thresh': 0,
+    })
+    kwargs = defaults | kwargs
+
+    class LoggerStreamWrapper:
+        def __init__(self, logger):
+            self.logger = logger
+
+        def flush(self):
+            ...
+
+        def write(self, msg):
+            self.logger.info(msg.rstrip())
+
+    wrapper = LoggerStreamWrapper(logger)
+    return ub.ProgIter(iterable, stream=wrapper, **kwargs)

@@ -133,7 +133,7 @@ class JellyfinMigratorConfig(scfg.DataConfig):
         '''
     ))
 
-    thread_logs = scfg.Value(True, help='if False, emit logs in serial. Useful for debugging, but slower')
+    thread_logs = scfg.Value(False, help='if False, emit logs in serial. Useful for debugging, but slower')
 
     debug_path = scfg.Value(None, help='directory for debug info')
 
@@ -414,6 +414,7 @@ def prepare_migration_datastructures(config):
         {
             # .xml, .mblink, .collection files are here.
             "source": SOURCE.data / "root/**/*.*",
+            "exclude": "*.db",
             "source_root": SOURCE.data,
             "original_root": ORIGINAL.data,
             "target_root": TARGET.data,
@@ -446,6 +447,7 @@ def prepare_migration_datastructures(config):
         # ... you should delete the cache and the logs though.
         {
             "source": SOURCE.data / "**/*.*",
+            "exclude": "*.db",
             "source_root": SOURCE.data,
             "original_root": ORIGINAL.data,
             "target_root": TARGET.data,

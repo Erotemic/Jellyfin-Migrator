@@ -58,7 +58,10 @@ def test_end_to_end():
     _ = apt_variant.exec('ls', cwd='/staging-e2e', verbose=3)
     # Check that the paths look like they updated correctly.
     # _ = apt_variant.exec('sqlite3 /root/.local/share/jellyfin/data/library.db "SELECT Path FROM TypedBaseItems;"', verbose=3)
-    _ = apt_variant.exec('sqlite3 /staging-e2e/data/library.db "SELECT Path FROM TypedBaseItems;"', verbose=3)
+    out = apt_variant.exec('sqlite3 /staging-e2e/data/library.db "SELECT Path FROM TypedBaseItems;"', verbose=3)
+
+    assert '/data/jellyfin/media/movies/The great train robbery.mp4' not in out.stdout.split('\n'), (
+        'The staging library db did not have paths correctly replaced.')
 
     # Create two variants of the staging directory for debugging
     raw_local_staging = (dpath / 'staging-raw')
@@ -67,6 +70,7 @@ def test_end_to_end():
         raw_local_staging.delete()
         live_local_staging.delete()
     except PermissionError:
+        # TODO: find a way to coyp out of docker without screwing with perms
         ub.cmd(f'sudo rm -rf {raw_local_staging}', verbose=3, system=True)
         ub.cmd(f'sudo rm -rf {live_local_staging}', verbose=3, system=True)
     apt_variant.copy_out('staging-e2e', to_path=raw_local_staging)
@@ -108,6 +112,7 @@ def test_end_to_end():
     item_id = client.jellyfin.search_media_items('Great Train')['Items'][0]['Id']
     item_path = client.jellyfin.get_item(item_id=item_id)['Path']
     assert not item_path.startswith('/data/jellyfin/media/movies/'), 'should have moved'
+    assert item_path.startswith('/media/movies/'), 'should have moved'
 
     print(f'items = {ub.urepr(items, nl=2)}')
     from collections import Counter

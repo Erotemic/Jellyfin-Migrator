@@ -34,6 +34,7 @@ from jellyfin_migrator.id_scanner import (
 )
 from jellyfin_migrator.utils import requires_permission
 from jellyfin_migrator.utils import SudoCredentialRefresher
+from jellyfin_migrator.utils import LogProgIter
 import logging
 import textwrap
 from contextlib import ExitStack
@@ -76,6 +77,8 @@ def update_db_table(
 ):
 
     """
+    This does the work of replacing paths to media items, among other things. Only handles one table at a time.
+
     repair(){
         cat <( sqlite3 "$1" .dump | grep "^ROLLBACK" -v ) <( echo "COMMIT;" ) | sqlite3 "fix_$1"
     }
@@ -84,7 +87,9 @@ def update_db_table(
     rows_count, modified, ignored = 0, 0, 0
 
     # Initialize sqlite3 objects
-    logger.info(f'[green]update_db_table, Connect to: file={file}')
+    logger.info(f'[green]update_db_table, Connect to: file={file} and modify table={table}')
+    logger.debug(f'[red]BEFORE: {file}  - {ub.hash_file(file)}')
+    check = False
     con = sqlite3.connect(file)
     with con:
         cur = con.cursor()
@@ -102,10 +107,15 @@ def update_db_table(
         json_stop = len(json_columns)
         path_stop = json_stop + len(path_columns)
 
-        # column_names = list(json_columns) + list(path_columns) + list(jf_image_columns)
+        column_infos = list(cur.execute(f'PRAGMA table_info({table});'))
+        has_type = 'MediaType' in [c[1] for c in column_infos]
+
+        column_names = list(json_columns) + list(path_columns) + list(jf_image_columns)
         # For the sql query the desired row names should be enclosed in ` ` and comma separated.
         # It's important to note that the json columns come first, followed by the path columns
-        columns = ", ".join([f"`{e}`" for e in list(json_columns) + list(path_columns)] + list(jf_image_columns))
+        to_escape_cols = list(json_columns) + list(path_columns)
+        columns = ", ".join([f"`{e}`" for e in to_escape_cols] + list(jf_image_columns))
+        logger.info(f'In table={table}, will update columns={column_names!r}')
 
         # Query the unique IDs of all rows. Note: we cannot iterate over the rows using
         #     for row in cur.execute(get rows)
@@ -115,14 +125,10 @@ def update_db_table(
         # the array below actually contains _tuples_ with the id. This is however desirable
         # in our case; see below where id is used.
         todo = [rowid for rowid in cur.execute(f"SELECT `rowid` FROM `{table}`") if rowid[0]]
+
+        todo_prog = LogProgIter(todo, logger, desc=f'Update {table}:', time_thresh=1)
         rows_count = len(todo)
-        t = time()
-        for progress, id in enumerate(todo):
-            # Print the progress every second. Note: this is the only usage of the "progress" variable.
-            now = time()
-            if now - t > 1:
-                logger.info(f"Progress: {progress} / {rows_count} rows")
-                t = now
+        for id in todo_prog:
 
             # Query the columns we want to check/modify of the current row (selected by id).
             # Since the id is a binary object, it's not directly included in the f-string.
@@ -131,6 +137,7 @@ def update_db_table(
             # IDs as tuple. The only other place where this id is used is in the update query
             # at the end of the loop which requires - just like here - a tuple.
             row = [r for r in cur.execute(f"SELECT {columns} FROM `{table}` WHERE `rowid` = ?", id)]
+
             # This _should_ not occur, but I think I have seen it happen rarely. Safe is safe.
             if len(row) != 1:
                 logger.info(f"Error with rowid {id}! Resulted in {len(row)} rows instead of 1. Skipping.")
@@ -146,7 +153,7 @@ def update_db_table(
             # result has the structure {column_name: updated_data} which makes it very easy to build
             # the update query at the end.
             result = dict()
-            # old_rowdata = ub.dzip(column_names, row)
+            old_rowdata = ub.dzip(column_names, row)
 
             # It's important to note that the tuple from cur.execute contains the columns _in the order
             # of the query string_. Therefore, we can separate json and path entries like this.
@@ -215,11 +222,26 @@ def update_db_table(
             # print(f'old_rowdata = {ub.urepr(old_rowdata, nl=1)}')
             # print(f'new_rowdata = {ub.urepr(new_rowdata, nl=1)}')
 
-            new_rowdata = {k.lower(): v for k, v in new_rowdata.items()}
-            # if 'path' in old_rowdata:
-            #     if old_rowdata['path'] == '/data/jellyfin/media/music/Clair_de_Lune_-_Wright_Brass_-_United_States_Air_Force_Band_of_Flight.mp3':
-            #         print(f'old_rowdata = {ub.urepr(old_rowdata, nl=1)}')
-            #         print(f'new_rowdata = {ub.urepr(new_rowdata, nl=1)}')
+            if 1 and has_type:
+                # HACK to show debug info for specific types
+                meta = [r for r in cur.execute(f"SELECT MediaType FROM `{table}` WHERE `rowid` = ?", id)]
+                media_type = meta[0][0]
+                if media_type != 'Unknown':
+                    new_rowdata = {k.lower(): v for k, v in new_rowdata.items()}
+                    # if 'path' in old_rowdata:
+                    #     # if old_rowdata['path'] == '/data/jellyfin/media/music/Clair_de_Lune_-_Wright_Brass_-_United_States_Air_Force_Band_of_Flight.mp3':
+                    print(f'old_rowdata = {ub.urepr(old_rowdata, nl=1)}')
+                    print(f'new_rowdata = {ub.urepr(new_rowdata, nl=1)}')
+                    print('--')
+
+                    if '/data/jellyfin/media' in replace_dict:
+                        check = True
+                        if new_rowdata['path'].startswith('/data/jellyfin/media'):
+                            raise AssertionError
+                        # raise Exception
+
+                    # if 'path' in old_rowdata:
+                    #     raise Exception
             # if 'path' in new_rowdata:
             #     if new_rowdata['path'] == '/data/jellyfin/media/music/Clair_de_Lune_-_Wright_Brass_-_United_States_Air_Force_Band_of_Flight.mp3':
             #         raise Exception
@@ -273,7 +295,23 @@ def update_db_table(
         con.commit()
         con.execute("PRAGMA wal_checkpoint(FULL);")  # Flush WAL changes to main database
 
+    logger.debug(f'[red]AFTER: {file}  - {ub.hash_file(file)}')
     # raise Exception
+    if check and 0:
+        import xdev
+        xdev.embed()
+
+        if 0:
+            uri = 'file:' + os.fspath(file) + '?mode=ro&immutable=1'
+            con = sqlite3.connect(uri, uri=True)
+            with con:
+                import pandas as pd
+                # table_names = list(pd.read_sql_query("SELECT name FROM sqlite_master WHERE type='table';", con)['name'])
+                table_name = 'TypedBaseItems'
+                table = pd.read_sql_query(f"SELECT * FROM {table_name}", con)
+                # Make bytes show as hex for readability
+                print(table[['guid', 'Path']])
+        raise Exception
 
 
 @profile
@@ -406,6 +444,7 @@ def collect_files_to_process(lst: list, process_func, replace_func, path_replace
     NEW:
         Just returns the tasks that need to be executed. Won't execute them yet.
     """
+    import fnmatch
     logger.info('Calling collect_files_to_process')
     done = set()
     staged_tasks = []
@@ -414,6 +453,7 @@ def collect_files_to_process(lst: list, process_func, replace_func, path_replace
             job["no_log"] = False
         source = job["source"]
         source_root = job['source_root']
+        exclude = job.pop('exclude', None)
 
         expanded_jobs = []
         if "*" in str(source):
@@ -450,6 +490,12 @@ def collect_files_to_process(lst: list, process_func, replace_func, path_replace
             # been processed.
             if source in done:
                 continue
+
+            # Explicit exclude because we separated the db from in stage 1 processing
+            if exclude is not None:
+                if fnmatch.fnmatch(source, exclude):
+                    continue
+
             done.add(source)
 
             original, source, staging, target, skip_copy = resolve_target(
@@ -595,6 +641,7 @@ def update_db_table_ids(
         Note: kwargs is due to how process_files works. It passes a lot of stuff from the
         job list that's not needed here.
     """
+    from collections import Counter
     if not os.path.exists(staging):
         logger.info(f"Database staging={staging} does not exist, skipping")
         return
@@ -602,6 +649,9 @@ def update_db_table_ids(
     logger.info("Updating Item IDs in database... ")
     assert IDS is not None
     # debug_staging_library('Before Update IDS', show_table=True)
+
+    update_histogram = Counter()
+    skip_histogram = Counter()
 
     # Initialize sqlite3 objects
     con = sqlite3.connect(staging)
@@ -612,11 +662,13 @@ def update_db_table_ids(
         # That's a very nested loop and could probably be written more efficiently using
         # multiprocessing and more advanced sqlite queries.
         for table, columns_by_id_type in tables.items():
+
             for id_type, columns in columns_by_id_type.items():
                 typed_id_mapper = IDS[id_type]
 
                 for column in columns:
-                    logger.info(f"Updating {column} IDs in table {table}...")
+                    table_col = f'{table}.{column}'
+                    logger.info(f"Updating IDs in table={table} column={column}...")
                     # See comment about iterating over rows while modifying them in update_db_table.
                     try:
                         rows = [r for r in cur.execute(f"SELECT DISTINCT `{column}` from `{table}`")]
@@ -624,19 +676,19 @@ def update_db_table_ids(
                         logger.info(f'ERROR: selecting distinct row from table={table} column={column} in {staging}')
                         raise
 
-                    rows_updated = 0
-                    rows_skipped = 0
+                    # progress = 0
+                    # rowcount = len(rows)
+                    # t = time()
 
-                    progress = 0
-                    rowcount = len(rows)
-                    t = time()
-                    for old_id, in rows:
-                        progress += 1
-                        # Print the progress every second. Note: this is the only usage of the "progress" variable.
-                        now = time()
-                        if now - t > 1:
-                            logger.info(f"Progress: {progress} / {rowcount} rows")
-                            t = now
+                    row_prog = LogProgIter(rows, logger, desc=f'Update IDs {table_col}:', time_thresh=1)
+                    for old_id, in row_prog:
+                        # progress += 1
+                        # # Print the progress every second. Note: this is the only usage of the "progress" variable.
+                        # now = time()
+                        # if now - t > 1:
+                        #     logger.info(f"Progress: {progress} / {rowcount} rows")
+                        #     t = now
+
                         if old_id in typed_id_mapper:
                             new_id = typed_id_mapper[old_id]
                             try:
@@ -649,10 +701,10 @@ def update_db_table_ids(
                                 for i, row in enumerate(rows):
                                     logger.info(f"Deleting ({i + 1}/{len(rows)}): {row}")
                                 cur.execute(f"DELETE FROM `{table}` WHERE `{column}` = ?", (old_id,))
-                            updated_ids_count += 1
-                            rows_updated += 1
+
+                            update_histogram[table_col] += 1
                         else:
-                            rows_skipped += 1
+                            skip_histogram[table_col] += 1
                     # if table == 'TypedBaseItems' and column == 'guid':
                     #     debug = [r for r in cur.execute(f"SELECT DISTINCT `{column}`,`Path` from `{table}`")]
                     #     print(f'debug = {ub.urepr(debug, nl=1)}')
@@ -668,7 +720,11 @@ def update_db_table_ids(
         con.commit()
 
     # debug_staging_library('After WAL', show_table=True)
-    logger.info(f"{updated_ids_count} IDs updated.")
+    updated_ids_count = sum(update_histogram.values())
+    logger.info(f"Updated {updated_ids_count} database IDs in staging={staging}, details:" + ub.urepr(update_histogram, nl=1))
+    logger.info(f"Skipped database IDs in staging={staging}, details:" + ub.urepr(skip_histogram, nl=1))
+
+    # raise Exception
 
 
 @profile
@@ -835,6 +891,8 @@ def copy(src, dst):
     """
     copy variant that attempts to handle permission issues
     """
+    if str(src).endswith('db'):
+        logger.debug(f'!!!COPY DATABASE FILE!!!!: {src} -> {dst}')
     try:
         shutil.copy(src, dst)
     except OSError:
@@ -846,17 +904,22 @@ def copy(src, dst):
 
 
 @profile
-def execute_tasks(staged_tasks):
+def execute_tasks(staged_tasks, desc='Execute Tasks:'):
     try:
         import pandas as pd
     except ImportError:
         ...
     else:
         df = pd.DataFrame(t for t in staged_tasks)
-        logger.info('Staged Task Table: \n' + str(df))
+        if len(df) < 100:
+            logger.info('Staged Task Table: \n' + str(df[['original', 'target']].to_string()))
+        else:
+            logger.info('Staged Task Table: \n' + str(df))
 
-    logger.info('[blue]Executing Tasks:')
-    for task in staged_tasks:
+    logger.info(f'[blue]{desc}')
+    prog = LogProgIter(staged_tasks, logger, desc=desc)
+    # for task in staged_tasks:
+    for task in prog:
         task = task.copy()
         process_func = task.pop('process_func')
         process_kwargs = task.pop('process_kwargs')
@@ -936,7 +999,7 @@ def setup_logger(log_file):
     date_format = "%Y-%m-%d %H:%M:%S"
 
     # Console handler with Rich
-    console_handler = RichHandler(markup=True)
+    console_handler = RichHandler(markup=True, omit_repeated_times=False)
     console_handler.setLevel(logging.DEBUG)
     # console_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(funcName)s - %(message)s", datefmt=date_format))
 
@@ -978,7 +1041,7 @@ def setup_logger_threaded(log_file):
     log_queue = queue.Queue(-1)  # No limit on queue size
 
     # Create and configure the logger
-    logger = logging.getLogger()
+    # logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)
 
     # Remove any existing handlers
@@ -995,7 +1058,7 @@ def setup_logger_threaded(log_file):
 
     # Create handlers that will do the actual logging
     # Console handler with Rich
-    console_handler = RichHandler(markup=True)
+    console_handler = RichHandler(markup=True, omit_repeated_times=False)
     console_handler.setLevel(logging.DEBUG)
 
     # File handler without Rich formatting
@@ -1020,7 +1083,7 @@ def setup_logger_threaded(log_file):
     listener.start()
 
     # Return both the logger and the listener in case you need to stop it later
-    return logger, listener
+    return listener
 
 
 @profile
@@ -1049,10 +1112,12 @@ def main(argv=True, **kwargs):
     TODO_LIST_ID_PATHS = migration_datastructures['TODO_LIST_ID_PATHS']
     TODO_LIST_IDS = migration_datastructures['TODO_LIST_IDS']
     FS_PATH_REPLACEMENTS = migration_datastructures['FS_PATH_REPLACEMENTS']
+
     target_data_path = config['target']['data']
 
+    listener = None
     if config.thread_logs:
-        setup_logger_threaded(config.log_file)
+        listener = setup_logger_threaded(config.log_file)
     else:
         setup_logger(config.log_file)
 
@@ -1083,6 +1148,9 @@ def main(argv=True, **kwargs):
         for context in contexts:
             stack.enter_context(context)
 
+        logger.info(f'PATH_REPLACEMENTS = {ub.urepr(PATH_REPLACEMENTS, nl=1)}')
+        logger.info(f'FS_PATH_REPLACEMENTS = {ub.urepr(FS_PATH_REPLACEMENTS, nl=1)}')
+
         ### Copy relevant files and adjust all paths to the new locations.
         logger.info("[white]STEP 1. Copy relevant files and adjust all paths to the new locations.")
 
@@ -1099,7 +1167,7 @@ def main(argv=True, **kwargs):
             use_extra_kwargs=True,
         )
         seen_tasks.append(staged_tasks1)
-        execute_tasks(staged_tasks1)
+        execute_tasks(staged_tasks1, desc='Stage 1 Execute: ')
 
         # Pull out the library db path explicitly
         # Since library.db will be needed throughout the process, its location is stored
@@ -1141,7 +1209,7 @@ def main(argv=True, **kwargs):
             use_extra_kwargs=True,
         )
         seen_tasks.append(staged_tasks2)
-        execute_tasks(staged_tasks2)
+        execute_tasks(staged_tasks2, desc='Stage 2 Execute: ')
 
         # debug_staging_library('AFTER GET IDS', show_table=True)
 
@@ -1178,7 +1246,7 @@ def main(argv=True, **kwargs):
             use_extra_kwargs=True,
         )
         seen_tasks.append(staged_tasks)
-        execute_tasks(staged_tasks)
+        execute_tasks(staged_tasks, desc='Stage 3.1 Execute: ')
 
         # Clean up empty folders that may be left behind in the target directory
         #delete_empty_folders(todo, there might be multiple target roots)
@@ -1195,7 +1263,7 @@ def main(argv=True, **kwargs):
             use_extra_kwargs=False,
         )
         seen_tasks.append(staged_tasks)
-        execute_tasks(staged_tasks)
+        execute_tasks(staged_tasks, desc='Stage 3.2 Execute: ')
 
         if config.debug_path is not None:
             step4_dpath = (config.debug_path / 'before_step4').ensuredir()
@@ -1213,6 +1281,9 @@ def main(argv=True, **kwargs):
         logger.info("")
         logger.info("[green]Jellyfin Database Migration complete.")
     logger.info(f"Log file written to: {config.log_file}")
+
+    if listener is not None:
+        listener.stop()
 
 
 def debug_staging_library(name, show_table=True):
