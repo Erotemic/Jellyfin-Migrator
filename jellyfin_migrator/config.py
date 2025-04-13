@@ -133,7 +133,7 @@ class JellyfinMigratorConfig(scfg.DataConfig):
         '''
     ))
 
-    thread_logs = scfg.Value(False, help='if False, emit logs in serial. Useful for debugging, but slower')
+    thread_logs = scfg.Value(True, help='if False, emit logs in serial. Useful for debugging, but slower')
 
     debug_path = scfg.Value(None, help='directory for debug info')
 

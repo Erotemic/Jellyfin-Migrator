@@ -21,7 +21,6 @@ import xml.etree.ElementTree as ET
 
 from pathlib import Path
 import shutil
-from time import time
 from functools import partial
 
 from jellyfin_migrator.utils import get_dotnet_MD5
@@ -222,7 +221,7 @@ def update_db_table(
             # print(f'old_rowdata = {ub.urepr(old_rowdata, nl=1)}')
             # print(f'new_rowdata = {ub.urepr(new_rowdata, nl=1)}')
 
-            if 1 and has_type:
+            if 0 and has_type:
                 # HACK to show debug info for specific types
                 meta = [r for r in cur.execute(f"SELECT MediaType FROM `{table}` WHERE `rowid` = ?", id)]
                 media_type = meta[0][0]
@@ -491,7 +490,11 @@ def collect_files_to_process(lst: list, process_func, replace_func, path_replace
             if source in done:
                 continue
 
-            # Explicit exclude because we separated the db from in stage 1 processing
+            # Explicit exclude. We had to add this because we separated the db
+            # from in stage 1 processing, and there is a "glob *" item at the
+            # end to catch all previously unseen items. Because we are trying
+            # to be more granual, we can fix this with a simple exclude item
+            # but a refactor could make this logic much easier to understand.
             if exclude is not None:
                 if fnmatch.fnmatch(source, exclude):
                     continue
