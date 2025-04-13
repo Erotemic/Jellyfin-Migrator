@@ -880,7 +880,7 @@ def execute_tasks(staged_tasks):
                 logger.info(f"Copy... {source} -> {staging}")
             # HACK:
             copy(source, staging)
-            if source.name == 'library.db':
+            if source.name in {'library.db', 'jellyfin.db'}:
                 logger.info('HACK: also copy wal and shm files')
                 src2 = ub.Path(source).augment(ext='.db-shm')
                 if src2.exists():

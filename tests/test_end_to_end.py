@@ -2,10 +2,6 @@
 TODO:
     - [ ] Add collections to source server to test.
 """
-import ubelt as ub
-from jellyfin_migrator.demo.migration_test_setups import setup_original_container
-from jellyfin_migrator.demo.migration_test_setups import setup_target_container
-from jellyfin_migrator.demo.migration_test_setups import selenium_login
 
 
 def test_end_to_end():
@@ -18,16 +14,16 @@ def test_end_to_end():
     Given these containers we attempt to migrate the ubuntu variant to the
     official docker variant.
     """
-    import jellyfin_migrator
-    # Get the path to the jellyfin migrator repo. we are going to copy the
-    # entire thing in.
-    repo_dpath = ub.Path(jellyfin_migrator.__file__).parent.parent
+    import ubelt as ub
+    from jellyfin_migrator.demo.migration_test_setups import setup_original_container
+    from jellyfin_migrator.demo.migration_test_setups import setup_target_container
+    from jellyfin_migrator.demo.migration_test_setups import selenium_login
     dpath = ub.Path.appdir('jellyfin-migrator').ensuredir()
 
     ####
     ####
     ####
-    apt_variant = setup_original_container(repo_dpath)
+    apt_variant = setup_original_container()
 
     USER_INTERACTIVE = 0
     if USER_INTERACTIVE:
@@ -89,12 +85,12 @@ def test_end_to_end():
     ####
     ####
     ####
-    docker_variant = setup_target_container(repo_dpath, live_local_staging)
+    docker_variant = setup_target_container(live_local_staging)
 
     # Create a client to perform some initial configuration.
     port = docker_variant.port
-    username = 'jellyfin-user'
-    password = 'jellyfin-pass'
+    username = apt_variant.username
+    password = apt_variant.password
     from jellyfin_apiclient_python import JellyfinClient
     client = JellyfinClient()
     url = 'http://localhost'
@@ -109,7 +105,14 @@ def test_end_to_end():
     client.auth.login(url, username, password)
     items = client.jellyfin.search_media_items()['Items']
     print(f'items = {ub.urepr(items, nl=2)}')
-    assert len(items) == 7
+    from collections import Counter
+    item_type_hist = Counter([item['Type'] for item in items])
+    assert item_type_hist == {
+        'Audio': 3,
+        'Folder': 3,
+        'Movie': 2,
+        'BoxSet': 2
+    }
     for item in items:
         if 'Popeye' in item['Name']:
             assert item['UserData']['IsFavorite']

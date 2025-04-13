@@ -22,6 +22,9 @@ import kwutil
 # or destination jellyfin directory structures. Keys defined here can be used
 # as shorthand values in the migration section to quickly configure the
 # source, target, and original locations of the jellyfin database to migrate.
+
+# Reference:
+# https://jellyfin.org/docs/general/administration/configuration/
 VARIANTS_YAML = ub.codeblock('''
     windows:
       config:     C:/ProgramData/Jellyfin/Server/config
