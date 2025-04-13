@@ -1212,6 +1212,7 @@ def main(argv=True, **kwargs):
 
         logger.info("")
         logger.info("[green]Jellyfin Database Migration complete.")
+    logger.info(f"Log file written to: {config.log_file}")
 
 
 def debug_staging_library(name, show_table=True):

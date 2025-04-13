@@ -56,22 +56,23 @@ def check_main_databases(root_dpath, include='*'):
     # user_table = tables['Users']
     # rich.print(user_table.T.to_string())
 
-    if include_pat.match('system.xml'):
-        text = (root_dpath / 'config/system.xml').read_text()
-        system_xml_data = kwutil.XML.loads(text)
-        print(f'system_xml_data = {ub.urepr(system_xml_data, nl=3)}')
+    if 0:
+        if include_pat.match('system.xml'):
+            text = (root_dpath / 'config/system.xml').read_text()
+            system_xml_data = kwutil.XML.loads(text)
+            print(f'system_xml_data = {ub.urepr(system_xml_data, nl=3)}')
 
-    if include_pat.match('mblink'):
-        mblink_files = list((root_dpath / 'root').glob('**/*.mblink'))
-        mblink_xml_files = list((root_dpath / 'root').glob('**/*.xml'))
+        if include_pat.match('mblink'):
+            mblink_files = list((root_dpath / 'root').glob('**/*.mblink'))
+            mblink_xml_files = list((root_dpath / 'root').glob('**/*.xml'))
 
-        from rich.syntax import Syntax
-        from rich.panel import Panel
-        for fpath in mblink_files:
-            rich.print(Panel(fpath.read_text(), title=str(fpath)))
+            from rich.syntax import Syntax
+            from rich.panel import Panel
+            for fpath in mblink_files:
+                rich.print(Panel(fpath.read_text(), title=str(fpath)))
 
-        for fpath in mblink_xml_files:
-            rich.print(Panel(Syntax(fpath.read_text(), 'xml'), title=str(fpath)))
+            for fpath in mblink_xml_files:
+                rich.print(Panel(Syntax(fpath.read_text(), 'xml'), title=str(fpath)))
 
 
 def report_sqlite_database(database_fpath, include_pat):
@@ -101,52 +102,68 @@ def report_sqlite_database(database_fpath, include_pat):
 
         tables[table_name] = table
 
+    table_summary = []
     for idx, (table_name, table) in enumerate(tables.items()):
-        if include_pat.match(table_name):
-            column_names = table.columns.values.tolist()
-            rich.print(f' - tablename: {table_name}')
-            rich.print(f'   nRows: {len(table)}')
-            rich.print(f'   nCols: {len(table.columns)}')
+        # if include_pat.match(table_name):
+        # rich.print(f' - tablename: {table_name}')
+        # rich.print(f'   nRows: {len(table)}')
+        # rich.print(f'   nCols: {len(table.columns)}')
+        table_summary.append({
+            'table_name': table_name,
+            'nRows': len(table),
+            'nCols': len(table.columns),
+        })
+    rich.print(pd.DataFrame(table_summary).to_string())
 
-    for idx, (table_name, table) in enumerate(tables.items()):
-        if include_pat.match(table_name):
-            column_names = table.columns.values.tolist()
-            rich.print(f' - tablename: {table_name}')
-            rich.print(f'   nRows: {len(table)}')
-            rich.print(f'   nCols: {len(table.columns)}')
-            rich.print(ub.indent(f'columns = {ub.urepr(column_names, nl=1)}', '   '))
-        ...
+    # for idx, (table_name, table) in enumerate(tables.items()):
+    #     if include_pat.match(table_name):
+    #         column_names = table.columns.values.tolist()
+    #         rich.print(f' - tablename: {table_name}')
+    #         rich.print(f'   nRows: {len(table)}')
+    #         rich.print(f'   nCols: {len(table.columns)}')
+    #         rich.print(ub.indent(f'columns = {ub.urepr(column_names, nl=1)}', '   '))
 
-    for idx, (table_name, table) in enumerate(tables.items()):
-        if include_pat.match(table_name):
-            do_transpose = len(str(table.columns)) > 200
-            rich.print(f'[white]--- {database_fpath} {idx} / {len(table_names)}')
-            rich.print(f'[white]--- TABLE: {table_name} ---')
-            if do_transpose:
-                rich.print('[white]--- TRANSPOSED')
-                if len(table) > 3:
-                    rich.print('[white]--- TRUNCATED')
-                    text = table.T.to_string(max_cols=5)
+    if 1:
+        for idx, (table_name, table) in enumerate(tables.items()):
+            if include_pat.match(table_name):
+                do_transpose = len(str(table.columns)) > 200
+                rich.print(f'[white]--- {database_fpath} {idx} / {len(table_names)}')
+                rich.print(f'[white]--- TABLE: {table_name} ---')
+                if do_transpose:
+                    rich.print('[white]--- TRANSPOSED')
+                    if len(table) > 3:
+                        rich.print('[white]--- TRUNCATED')
+                        text = table.T.to_string(max_cols=5)
+                    else:
+                        text = table.T.to_string()
                 else:
-                    text = table.T.to_string()
-            else:
-                text = table.to_string()
+                    text = table.to_string()
 
-            rich.print(f'[white]--- nRows={table.shape[0]}')
-            rich.print(f'[white]--- nCols={table.shape[1]}')
-            rich.print(f'[white]--- {ub.urepr(table.columns, nl=0)}')
-            rich.print(escape(text))
+                rich.print(f'[white]--- nRows={table.shape[0]}')
+                rich.print(f'[white]--- nCols={table.shape[1]}')
+                rich.print(f'[white]--- {ub.urepr(table.columns, nl=0)}')
+                rich.print(escape(text))
 
-            if table_name == 'TypedBaseItems':
-                print('Hack to show all paths:')
-                table = table.sort_values('Path')
-                # rich.print(escape(table['Path'].to_string()))
-                print('Hack to show all Ids:')
-                selected = table[['guid', 'ParentId', 'TopParentId', 'Path', 'Images']].copy()
-                # selected = selected.map(niceview)
-                rich.print(escape(selected.to_string()))
-                print('Hack to show data:')
-                rich.print(escape(table['data'].to_string()))
+                if table_name == 'TypedBaseItems':
+                    print('Hack to show all paths:')
+                    table = table.sort_values('Path')
+                    # rich.print(escape(table['Path'].to_string()))
+                    print('Hack to show all Ids:')
+                    # selected = table[['guid', 'ParentId', 'TopParentId', 'Path', 'Images']].copy()
+                    selected = table[['guid', 'ParentId', 'TopParentId', 'Path']].copy()
+                    # selected = selected.map(niceview)
+                    rich.print(escape(selected.to_string()))
+                    print('Hack to show data:')
+                    rich.print(escape(table['data'].to_string()))
+
+                # Hack to show specific item
+                if 0:
+                    for item in table.to_dict('records'):
+                        if item.get('Path', '').endswith('/Movies'):
+                            # if 'Music' in item['Path']:
+                            rich.print(f'item = {escape(ub.urepr(item, nl=1))}')
+                            ...
+                    ...
 
     return tables
 
@@ -157,6 +174,7 @@ if __name__ == '__main__':
 
     CommandLine:
         python ~/code/Jellyfin-Migrator/jellyfin_migrator/debug_tools.py
-        python -m jellyfin_migrator.debug_tools
+        python3 -m jellyfin_migrator.debug_tools /config
+        python3 -m jellyfin_migrator.debug_tools /root/.local/share/jellyfin
     """
     __cli__.main()
