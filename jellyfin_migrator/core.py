@@ -580,6 +580,7 @@ def process_file(
             update_db_table(file=staging, replace_dict=replacements, replace_func=replace_func, table=table, **kwargs)
         # debug_staging_library('PROCESS_FILE-AFTER')
     elif staging.suffix == ".xml" or staging.suffix == ".nfo":
+        # nfo files take a long time to processes
         update_xml(file=staging, replace_dict=replacements, replace_func=replace_func)
     elif staging.suffix == ".mblink":
         # .mblink files only contain a path (to what seems to be a media library), nothing else.
@@ -922,6 +923,9 @@ def execute_tasks(staged_tasks, desc='Execute Tasks:'):
     logger.info(f'[blue]{desc}')
     prog = LogProgIter(staged_tasks, logger, desc=desc)
     # for task in staged_tasks:
+
+    # TODO: move nfo tasks to the end to get better progress estimation
+
     for task in prog:
         task = task.copy()
         process_func = task.pop('process_func')

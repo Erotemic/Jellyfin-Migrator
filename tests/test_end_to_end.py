@@ -107,14 +107,15 @@ def test_end_to_end():
     url = f'{url}:{port}'
     client.auth.connect_to_address(url)
     client.auth.login(url, username, password)
-    items = client.jellyfin.search_media_items()['Items']
+    resp = client.jellyfin.search_media_items()
+    items = resp['Items']
+    print(f'items = {ub.urepr(items, nl=2)}')
 
     item_id = client.jellyfin.search_media_items('Great Train')['Items'][0]['Id']
     item_path = client.jellyfin.get_item(item_id=item_id)['Path']
     assert not item_path.startswith('/data/jellyfin/media/movies/'), 'should have moved'
     assert item_path.startswith('/media/movies/'), 'should have moved'
 
-    print(f'items = {ub.urepr(items, nl=2)}')
     from collections import Counter
     item_type_hist = Counter([item['Type'] for item in items])
     assert item_type_hist == {

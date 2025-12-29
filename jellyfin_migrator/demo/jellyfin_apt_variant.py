@@ -96,6 +96,14 @@ class JellyfinAptContainer(OCIContainer):
             print('server is alive')
         return self
 
+    def hard_reset(self):
+        """
+        Completely remove the base and cache image for a fresh start.
+        """
+        self.stop()
+        self.remove(force=True, volumes=True)
+        self.engine_cmd('rmi ' + self.cached_image, verbose=3)
+
     def reset(self):
         self.remove(force=True, volumes=True)
         self.create()
@@ -117,6 +125,7 @@ class JellyfinAptContainer(OCIContainer):
     def _run_server(self):
         import time
         assert self.name is not None, 'container name should exist'
+        ub.cmd(f'docker exec {self.name} /usr/bin/jellyfin --version')
         ub.cmd(f'docker exec --detach {self.name} /usr/bin/jellyfin --webdir=/usr/share/jellyfin/web --ffmpeg=/usr/lib/jellyfin-ffmpeg/ffmpeg')
         wait_time = 0
 
@@ -125,7 +134,7 @@ class JellyfinAptContainer(OCIContainer):
             # Block until server is online
             while not self.is_alive():
                 prog.step()
-                time.sleep(0.1)
+                time.sleep(1.0)
                 wait_time += 1
                 if wait_time > 20:
                     if self.is_alive_fallback():
@@ -140,9 +149,10 @@ class JellyfinAptContainer(OCIContainer):
             '''
             #!/usr/bin/env bash
             export DEBIAN_FRONTEND=noninteractive
+            set -e
             apt update
             apt-get install software-properties-common -y
-            apt install curl gnupg -y
+            apt-get install curl gnupg -y
             add-apt-repository universe
 
             mkdir -p /etc/apt/keyrings
@@ -158,14 +168,14 @@ class JellyfinAptContainer(OCIContainer):
             EOF
 
             apt update
-            apt install jellyfin -y
+            apt-get install jellyfin -y
             ''')
 
         DEV_GOODIES = True
         if DEV_GOODIES:
             setupscript_text += '\n' + ub.codeblock(
                 '''
-                apt install python3-pip fd-find tree psmisc sqlite3 --yes
+                apt-get install python3-pip fd-find tree psmisc sqlite3 --yes
                 pip install pandas ubelt rich kwutil networkx scriptconfig
                 ''')
 

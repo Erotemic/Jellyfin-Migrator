@@ -140,3 +140,7 @@ class JellyfinInitializer:
             name='Music', collectionType='music',
             paths=[str(media_dpath) + '/music'], refreshLibrary=True,
         )
+        client.jellyfin.add_media_library(
+            name='Shows', collectionType='tvshows',
+            paths=[str(media_dpath) + '/shows'], refreshLibrary=True,
+        )
